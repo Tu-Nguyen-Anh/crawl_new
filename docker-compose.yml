@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: news_crawler
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - MONGO_URI=mongodb://<hostname_or_ip_of_existing_mongo>:27017  # Đặt địa chỉ MongoDB sẵn có
+    command: python crawl.py
