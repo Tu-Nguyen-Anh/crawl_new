@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import time
 
 # MongoDB Connection
-MONGO_URI = 'mongodb://10.8.0.1:27017/'
+MONGO_URI = 'mongodb://mongodb:27017/'
 DATABASE_NAME = 'olh_news'
 COLLECTION_NAME = 'articles'
 
