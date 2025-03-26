@@ -1,5 +1,4 @@
 version: '3.8'
-
 services:
   web:
     build: .
@@ -8,6 +7,10 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
-    environment:
-      - MONGO_URI=mongodb://<hostname_or_ip_of_existing_mongo>:27017
     command: python crawl.py
+    networks:
+      - english-vocabulary-network
+
+networks:
+  english-vocabulary-network:
+    external: true
