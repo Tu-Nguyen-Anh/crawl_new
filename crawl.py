@@ -9,7 +9,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-client = MongoClient('mongodb://localhost:27017/')
+client = MongoClient('mongodb://10.8.0.1:27017/')
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
