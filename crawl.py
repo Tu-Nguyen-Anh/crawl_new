@@ -252,20 +252,6 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
     except Exception as e:
         logger.error(f"Lỗi khi crawl danh mục {category_code}: {str(e)}")
 
-# def crawl_all_sources(articles_collection):
-#     logger.info(f"Bắt đầu crawl lúc {datetime.now()}")
-#     for base_url, categories, crawl_func, source in [
-#         ('https://vnexpress.net/', VNEXPRESS_CATEGORIES, crawl_vnexpress_category, 'vnexpress'),
-#         ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
-#         ('https://tienphong.vn/', TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
-#     ]:
-#         last_crawl_time = get_last_crawl_time(source)
-#         for code in categories:
-#             crawl_func(f"{base_url}{code}", code, articles_collection, last_crawl_time)
-#         update_last_crawl_time(source)
-#     logger.info("Hoàn thành crawl")
-
-
 def crawl_all_sources(articles_collection):
     logger.info(f"Bắt đầu crawl lúc {datetime.now()}")
     for base_url, categories, crawl_func, source in [
@@ -273,12 +259,26 @@ def crawl_all_sources(articles_collection):
         ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
         ('https://tienphong.vn/', TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
     ]:
-        # Đặt last_crawl_time là 3 ngày trước ngay trong hàm
-        last_crawl_time = datetime.now() - timedelta(days=3)
+        last_crawl_time = get_last_crawl_time(source)
         for code in categories:
             crawl_func(f"{base_url}{code}", code, articles_collection, last_crawl_time)
         update_last_crawl_time(source)
     logger.info("Hoàn thành crawl")
+
+
+# def crawl_all_sources(articles_collection):
+#     logger.info(f"Bắt đầu crawl lúc {datetime.now()}")
+#     for base_url, categories, crawl_func, source in [
+#         ('https://vnexpress.net/', VNEXPRESS_CATEGORIES, crawl_vnexpress_category, 'vnexpress'),
+#         ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
+#         ('https://tienphong.vn/', TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
+#     ]:
+#         # Đặt last_crawl_time là 3 ngày trước ngay trong hàm
+#         last_crawl_time = datetime.now() - timedelta(days=3)
+#         for code in categories:
+#             crawl_func(f"{base_url}{code}", code, articles_collection, last_crawl_time)
+#         update_last_crawl_time(source)
+#     logger.info("Hoàn thành crawl")
 
 def main():
     initialize_categories()
