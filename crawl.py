@@ -19,20 +19,24 @@ VNEXPRESS_CATEGORIES = {
     'thoi-su': 'Thời sự', 'kinh-doanh': 'Kinh doanh', 'the-gioi': 'Thế giới', 'giai-tri': 'Giải trí',
     'the-thao': 'Thể thao', 'phap-luat': 'Pháp luật', 'giao-duc': 'Giáo dục', 'suc-khoe': 'Sức khỏe',
     'doi-song': 'Đời sống', 'du-lich': 'Du lịch', 'khoa-hoc': 'Khoa học', 'so-hoa': 'Số hóa',
-    'oto-xe-may': 'Xe', 'y-kien': 'Ý kiến'
+    'oto-xe-may': 'Xe', 'y-kien': 'Ý kiến', 'tam-su':'Tâm sự', 'thu-gian':'Thư giãn', 'bat-dong-san':'Bất động sản', 'goc-nhin':'Góc nhìn'
 }
 
 NHANDAN_CATEGORIES = {
     'chinhtri/': 'Chính trị', 'kinhte/': 'Kinh tế', 'xahoi/': 'Xã hội', 'vanhoa/': 'Văn hóa',
     'giaoduc/': 'Giáo dục', 'khoahoc-congnghe/': 'Khoa học - Công nghệ', 'thethao/': 'Thể thao',
     'moi-truong/': 'Môi trường', 'thegioi/': 'Thế giới', 'phapluat/': 'Pháp luật', 'y-te/': 'Y Tế',
-    'du-lich/': 'Du lịch'
+    'du-lich/': 'Du lịch', 'factcheck/': 'Kiểm chứng thông tin', 'hanoi/': 'Hà Nội', 'tphcm/': 'Thành phố Hồ Chí Minh',
+    'trung-du-va-mien-nui-bac-bo/': 'Trung du và miền núi Bắc Bộ', 'xe/': "Xe"
 }
 
 TIENPHONG_CATEGORIES = {
     'dia-oc/': 'Địa ốc', 'kinh-te/': 'Kinh tế', 'song-xanh': 'Sóng xanh', 'giai-tri/': 'Giải trí',
     'the-thao/': 'Thể thao', 'hoa-hau/': 'Hoa hậu', 'suc-khoe/': 'Sức khỏe', 'giao-duc/': 'Giáo dục',
-    'phap-luat/': 'Pháp luật', 'van-hoa/': 'Văn hóa'
+    'phap-luat/': 'Pháp luật', 'van-hoa/': 'Văn hóa', 'hang-khong-du-lich/': 'Hàng không - Du lịch',
+    'hanh-trang-nguoi-linh/': 'Hành trang người lính', 'gioi-tre/': 'Giới trẻ', 'ban-doc/': 'Bạn đọc',
+    'quizz/': 'quizz/', 'nhip-song-thu-do/': 'Nhịp sống thủ đô', 'toi-nghi/': 'Tôi nghĩ', 
+    'nhip-song-phuong-nam/': 'Nhịp sống Phương Nam', 'chuyen-dong-24h/': 'Chuyển động 24h'
 }
 
 SOURCES = [
@@ -248,20 +252,6 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
     except Exception as e:
         logger.error(f"Lỗi khi crawl danh mục {category_code}: {str(e)}")
 
-def crawl_all_sources(articles_collection):
-    logger.info(f"Bắt đầu crawl lúc {datetime.now()}")
-    for base_url, categories, crawl_func, source in [
-        ('https://vnexpress.net/', VNEXPRESS_CATEGORIES, crawl_vnexpress_category, 'vnexpress'),
-        ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
-        ('https://tienphong.vn/', TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
-    ]:
-        last_crawl_time = get_last_crawl_time(source)
-        for code in categories:
-            crawl_func(f"{base_url}{code}", code, articles_collection, last_crawl_time)
-        update_last_crawl_time(source)
-    logger.info("Hoàn thành crawl")
-
-
 # def crawl_all_sources(articles_collection):
 #     logger.info(f"Bắt đầu crawl lúc {datetime.now()}")
 #     for base_url, categories, crawl_func, source in [
@@ -269,12 +259,26 @@ def crawl_all_sources(articles_collection):
 #         ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
 #         ('https://tienphong.vn/', TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
 #     ]:
-#         # Đặt last_crawl_time là 3 ngày trước ngay trong hàm
-#         last_crawl_time = datetime.now() - timedelta(days=3)
+#         last_crawl_time = get_last_crawl_time(source)
 #         for code in categories:
 #             crawl_func(f"{base_url}{code}", code, articles_collection, last_crawl_time)
 #         update_last_crawl_time(source)
 #     logger.info("Hoàn thành crawl")
+
+
+def crawl_all_sources(articles_collection):
+    logger.info(f"Bắt đầu crawl lúc {datetime.now()}")
+    for base_url, categories, crawl_func, source in [
+        ('https://vnexpress.net/', VNEXPRESS_CATEGORIES, crawl_vnexpress_category, 'vnexpress'),
+        ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
+        ('https://tienphong.vn/', TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
+    ]:
+        # Đặt last_crawl_time là 3 ngày trước ngay trong hàm
+        last_crawl_time = datetime.now() - timedelta(days=3)
+        for code in categories:
+            crawl_func(f"{base_url}{code}", code, articles_collection, last_crawl_time)
+        update_last_crawl_time(source)
+    logger.info("Hoàn thành crawl")
 
 def main():
     initialize_categories()
