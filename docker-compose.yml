@@ -7,7 +7,7 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
-    command: python crawl.py
+    command: python send_notification.py
     networks:
       - english-vocabulary-network
 

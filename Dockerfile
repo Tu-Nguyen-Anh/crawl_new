@@ -19,4 +19,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Chạy ứng dụng
-CMD ["python", "crwawl.py"]
+CMD ["python", "send_notification.py"]
