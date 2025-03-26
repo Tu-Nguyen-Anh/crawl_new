@@ -2,15 +2,9 @@ version: '3.8'
 services:
   web:
     build: .
-    container_name: news_crawler
+    container_name: notification_news_telegram
     ports:
       - "8000:8000"
     volumes:
       - .:/app
     command: python crawl.py
-    networks:
-      - english-vocabulary-network
-
-networks:
-  english-vocabulary-network:
-    external: true

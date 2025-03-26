@@ -1,17 +1,22 @@
-# Sử dụng image chính thức của Python
+# Sử dụng image Python chính thức
 FROM python:3.9-slim
 
-# Đặt thư mục làm việc trong container
+# Thiết lập thư mục làm việc
 WORKDIR /app
 
-# Copy file requirements.txt vào container
-COPY requirements.txt /app/
+# Cài đặt các gói hệ thống cần thiết
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
-# Cài đặt các thư viện từ requirements.txt
+# Sao chép file requirements.txt trước để tận dụng cache
+COPY requirements.txt .
+
+# Cài đặt các dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy toàn bộ mã nguồn vào trong container
-COPY . /app/
+# Sao chép toàn bộ mã nguồn
+COPY . .
 
-# Chạy script crawl.py
-CMD ["python", "crawl.py"]
+# Chạy ứng dụng
+CMD ["python", "crwawl.py"]
