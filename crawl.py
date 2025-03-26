@@ -27,7 +27,7 @@ NHANDAN_CATEGORIES = {
     'giaoduc/': 'Giáo dục', 'khoahoc-congnghe/': 'Khoa học - Công nghệ', 'thethao/': 'Thể thao',
     'moi-truong/': 'Môi trường', 'thegioi/': 'Thế giới', 'phapluat/': 'Pháp luật', 'y-te/': 'Y Tế',
     'du-lich/': 'Du lịch', 'factcheck/': 'Kiểm chứng thông tin', 'hanoi/': 'Hà Nội', 'tphcm/': 'Thành phố Hồ Chí Minh',
-    'trung-du-va-mien-nui-bac-bo/': 'Trung du và miền núi Bắc Bộ', 'xe/': "Xe"
+    'trung-du-va-mien-nui-bac-bo/': 'Trung du và miền núi Bắc Bộ'
 }
 
 TIENPHONG_CATEGORIES = {
@@ -36,7 +36,7 @@ TIENPHONG_CATEGORIES = {
     'phap-luat/': 'Pháp luật', 'van-hoa/': 'Văn hóa', 'hang-khong-du-lich/': 'Hàng không - Du lịch',
     'hanh-trang-nguoi-linh/': 'Hành trang người lính', 'gioi-tre/': 'Giới trẻ', 'ban-doc/': 'Bạn đọc',
     'quizz/': 'quizz/', 'nhip-song-thu-do/': 'Nhịp sống thủ đô', 'toi-nghi/': 'Tôi nghĩ', 
-    'nhip-song-phuong-nam/': 'Nhịp sống Phương Nam', 'chuyen-dong-24h/': 'Chuyển động 24h'
+    'nhip-song-phuong-nam/': 'Nhịp sống Phương Nam', 'chuyen-dong-24h/': 'Chuyển động 24h', 'xe/': "Xe"
 }
 
 SOURCES = [
@@ -212,7 +212,7 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
             article_soup = BeautifulSoup(article_response.content, 'html.parser')
             publish_date = None
             date_tag = article_soup.select_one('div.article__meta time')
-            if date_tag and date_tag.text.strip():
+            if date_tag and hasattr(date_tag, 'text') and date_tag.text.strip():
                 try:
                     publish_date = datetime.strptime(date_tag.text.strip(), '%d/%m/%Y | %H:%M')
                 except ValueError:
@@ -224,7 +224,8 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
                 continue
 
             title = title_tag.text.strip()
-            description = (article_soup.find('div', class_='article__sapo') or article_soup.find('h2', class_='article__sapo') or '').text.strip()
+            description_tag = article_soup.find('div', class_='article__sapo') or article_soup.find('h2', class_='article__sapo')
+            description = description_tag.text.strip() if description_tag else ''
             
             content_div = article_soup.find('div', class_='article__body')
             if content_div:
@@ -238,7 +239,8 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
                       if img['data-src'].startswith('http')] or ([article_soup.find('meta', property='og:image')['content']] 
                                                                  if article_soup.find('meta', property='og:image') else [])
 
-            author = (article_soup.find('div', class_='article__author') or '').find('span', class_='name cms-author').text.strip() if article_soup.find('div', class_='article__author') else None
+            author_div = article_soup.find('div', class_='article__author')
+            author = author_div.find('span', class_='name cms-author').text.strip() if author_div and author_div.find('span', class_='name cms-author') else None
             if not author and (meta_author := article_soup.find('meta', property='dable:author')):
                 author = meta_author['content']
 
