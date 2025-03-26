@@ -8,3 +8,9 @@ services:
     volumes:
       - .:/app
     command: python crawl.py
+    networks:
+      - english-vocabulary-network
+
+networks:
+  english-vocabulary-network:
+    external: true
