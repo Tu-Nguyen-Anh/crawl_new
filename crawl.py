@@ -9,7 +9,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-client = MongoClient('mongodb://mongodb:27017/')
+client = MongoClient('mongodb://localhost:27017/')
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
@@ -221,11 +221,18 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
 
             title = title_tag.text.strip()
             description = (article_soup.find('div', class_='article__sapo') or article_soup.find('h2', class_='article__sapo') or '').text.strip()
+            
+            # Sửa phần trích xuất content
             content_div = article_soup.find('div', class_='article__body')
-            content = content_div.get_text(separator='\n', strip=True) if content_div else ''
             if content_div:
+                # Loại bỏ các phần tử không mong muốn trước
                 for unwanted in content_div.find_all(['script', 'style', 'aside', 'div', 'table']):
                     unwanted.decompose()
+                # Sau đó mới lấy văn bản
+                content = content_div.get_text(separator='\n', strip=True)
+            else:
+                content = ''
+                
             images = [img['data-src'] for img in (content_div or article_soup).find_all('img', {'data-src': True}) 
                       if img['data-src'].startswith('http')] or ([article_soup.find('meta', property='og:image')['content']] 
                                                                  if article_soup.find('meta', property='og:image') else [])
@@ -247,8 +254,8 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
 def crawl_all_sources(articles_collection):
     logger.info(f"Bắt đầu crawl lúc {datetime.now()}")
     for base_url, categories, crawl_func, source in [
-        ('https://vnexpress.net/', VNEXPRESS_CATEGORIES, crawl_vnexpress_category, 'vnexpress'),
-        ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
+        # ('https://vnexpress.net/', VNEXPRESS_CATEGORIES, crawl_vnexpress_category, 'vnexpress'),
+        # ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
         ('https://tienphong.vn/', TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
     ]:
         last_crawl_time = get_last_crawl_time(source)
