@@ -10,7 +10,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-client = MongoClient('mongodb://mongodb:27017/')
+client = MongoClient('mongodb://localhost:27017/')
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
@@ -36,7 +36,9 @@ VNEXPRESS_CATEGORIES = {
     'https://vnexpress.net/tam-su': 'Tâm sự',
     'https://vnexpress.net/thu-gian': 'Thư giãn',
     'https://vnexpress.net/bat-dong-san': 'Bất động sản',
-    'https://vnexpress.net/goc-nhin': 'Góc nhìn'
+    'https://vnexpress.net/goc-nhin': 'Góc nhìn',
+    'https://vnexpress.net/tin-tuc-24h': 'Tin tức 24h',
+    'https://vnexpress.net/tin-nong': 'Tin nóng'
 }
 
 NHANDAN_CATEGORIES = {
@@ -102,7 +104,7 @@ def initialize_categories():
         category_data = {
             '_id': str(uuid.uuid4()),
             'name': name,
-            'source_id': source['_id'],
+            'source': source,  # Lưu toàn bộ object source thay vì chỉ source_id
             'url': url
         }
         categories_collection.insert_one(category_data)
@@ -110,11 +112,10 @@ def initialize_categories():
 def get_category_info(category_url):
     category = categories_collection.find_one({'url': category_url})
     if category:
-        source = sources_collection.find_one({'_id': category['source_id']})
         return {
             '_id': category['_id'],
             'name': category['name'],
-            'source': source,
+            'source': category['source'],  # Trả về source đã được nhúng
             'url': category['url']
         }
     return None
