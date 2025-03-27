@@ -1,3 +1,4 @@
+import uuid
 import requests
 from bs4 import BeautifulSoup
 import schedule
@@ -9,56 +10,114 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-client = MongoClient('mongodb://mongodb:27017/')
+client = MongoClient('mongodb://localhost:27017/')
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
-crawl_metadata = db['crawl_metadata']  # Collection lưu thời gian crawl gần nhất
+sources_collection = db['sources']
+crawl_metadata = db['crawl_metadata']
 
+# Updated category dictionaries with full URLs as keys
 VNEXPRESS_CATEGORIES = {
-    'thoi-su': 'Thời sự', 'kinh-doanh': 'Kinh doanh', 'the-gioi': 'Thế giới', 'giai-tri': 'Giải trí',
-    'the-thao': 'Thể thao', 'phap-luat': 'Pháp luật', 'giao-duc': 'Giáo dục', 'suc-khoe': 'Sức khỏe',
-    'doi-song': 'Đời sống', 'du-lich': 'Du lịch', 'khoa-hoc': 'Khoa học', 'so-hoa': 'Số hóa',
-    'oto-xe-may': 'Xe', 'y-kien': 'Ý kiến', 'tam-su':'Tâm sự', 'thu-gian':'Thư giãn', 'bat-dong-san':'Bất động sản', 'goc-nhin':'Góc nhìn'
+    'https://vnexpress.net/thoi-su': 'Thời sự',
+    'https://vnexpress.net/kinh-doanh': 'Kinh doanh',
+    'https://vnexpress.net/the-gioi': 'Thế giới',
+    'https://vnexpress.net/giai-tri': 'Giải trí',
+    'https://vnexpress.net/the-thao': 'Thể thao',
+    'https://vnexpress.net/phap-luat': 'Pháp luật',
+    'https://vnexpress.net/giao-duc': 'Giáo dục',
+    'https://vnexpress.net/suc-khoe': 'Sức khỏe',
+    'https://vnexpress.net/doi-song': 'Đời sống',
+    'https://vnexpress.net/du-lich': 'Du lịch',
+    'https://vnexpress.net/khoa-hoc': 'Khoa học',
+    'https://vnexpress.net/so-hoa': 'Số hóa',
+    'https://vnexpress.net/oto-xe-may': 'Xe',
+    'https://vnexpress.net/y-kien': 'Ý kiến',
+    'https://vnexpress.net/tam-su': 'Tâm sự',
+    'https://vnexpress.net/thu-gian': 'Thư giãn',
+    'https://vnexpress.net/bat-dong-san': 'Bất động sản',
+    'https://vnexpress.net/goc-nhin': 'Góc nhìn'
 }
 
 NHANDAN_CATEGORIES = {
-    'chinhtri/': 'Chính trị', 'kinhte/': 'Kinh tế', 'xahoi/': 'Xã hội', 'vanhoa/': 'Văn hóa',
-    'giaoduc/': 'Giáo dục', 'khoahoc-congnghe/': 'Khoa học - Công nghệ', 'thethao/': 'Thể thao',
-    'moi-truong/': 'Môi trường', 'thegioi/': 'Thế giới', 'phapluat/': 'Pháp luật', 'y-te/': 'Y Tế',
-    'du-lich/': 'Du lịch', 'factcheck/': 'Kiểm chứng thông tin', 'hanoi/': 'Hà Nội', 'tphcm/': 'Thành phố Hồ Chí Minh',
-    'trung-du-va-mien-nui-bac-bo/': 'Trung du và miền núi Bắc Bộ'
+    'https://nhandan.vn/chinhtri/': 'Chính trị',
+    'https://nhandan.vn/kinhte/': 'Kinh tế',
+    'https://nhandan.vn/xahoi/': 'Xã hội',
+    'https://nhandan.vn/vanhoa/': 'Văn hóa',
+    'https://nhandan.vn/giaoduc/': 'Giáo dục',
+    'https://nhandan.vn/khoahoc-congnghe/': 'Khoa học - Công nghệ',
+    'https://nhandan.vn/thethao/': 'Thể thao',
+    'https://nhandan.vn/moi-truong/': 'Môi trường',
+    'https://nhandan.vn/thegioi/': 'Thế giới',
+    'https://nhandan.vn/phapluat/': 'Pháp luật',
+    'https://nhandan.vn/y-te/': 'Y Tế',
+    'https://nhandan.vn/du-lich/': 'Du lịch',
+    'https://nhandan.vn/factcheck/': 'Kiểm chứng thông tin',
+    'https://nhandan.vn/hanoi/': 'Hà Nội',
+    'https://nhandan.vn/tphcm/': 'Thành phố Hồ Chí Minh',
+    'https://nhandan.vn/trung-du-va-mien-nui-bac-bo/': 'Trung du và miền núi Bắc Bộ'
 }
 
 TIENPHONG_CATEGORIES = {
-    'dia-oc/': 'Địa ốc', 'kinh-te/': 'Kinh tế', 'song-xanh': 'Sóng xanh', 'giai-tri/': 'Giải trí',
-    'the-thao/': 'Thể thao', 'hoa-hau/': 'Hoa hậu', 'suc-khoe/': 'Sức khỏe', 'giao-duc/': 'Giáo dục',
-    'phap-luat/': 'Pháp luật', 'van-hoa/': 'Văn hóa', 'hang-khong-du-lich/': 'Hàng không - Du lịch',
-    'hanh-trang-nguoi-linh/': 'Hành trang người lính', 'gioi-tre/': 'Giới trẻ', 'ban-doc/': 'Bạn đọc',
-    'quizz/': 'quizz/', 'nhip-song-thu-do/': 'Nhịp sống thủ đô', 'toi-nghi/': 'Tôi nghĩ', 
-    'nhip-song-phuong-nam/': 'Nhịp sống Phương Nam', 'chuyen-dong-24h/': 'Chuyển động 24h', 'xe/': "Xe"
+    'https://tienphong.vn/dia-oc/': 'Địa ốc',
+    'https://tienphong.vn/kinh-te/': 'Kinh tế',
+    'https://tienphong.vn/song-xanh': 'Sóng xanh',
+    'https://tienphong.vn/giai-tri/': 'Giải trí',
+    'https://tienphong.vn/the-thao/': 'Thể thao',
+    'https://tienphong.vn/hoa-hau/': 'Hoa hậu',
+    'https://tienphong.vn/suc-khoe/': 'Sức khỏe',
+    'https://tienphong.vn/giao-duc/': 'Giáo dục',
+    'https://tienphong.vn/phap-luat/': 'Pháp luật',
+    'https://tienphong.vn/van-hoa/': 'Văn hóa',
+    'https://tienphong.vn/hang-khong-du-lich/': 'Hàng không - Du lịch',
+    'https://tienphong.vn/hanh-trang-nguoi-linh/': 'Hành trang người lính',
+    'https://tienphong.vn/gioi-tre/': 'Giới trẻ',
+    'https://tienphong.vn/ban-doc/': 'Bạn đọc',
+    'https://tienphong.vn/quizz/': 'quizz/',
+    'https://tienphong.vn/nhip-song-thu-do/': 'Nhịp sống thủ đô',
+    'https://tienphong.vn/toi-nghi/': 'Tôi nghĩ',
+    'https://tienphong.vn/nhip-song-phuong-nam/': 'Nhịp sống Phương Nam',
+    'https://tienphong.vn/chuyen-dong-24h/': 'Chuyển động 24h',
+    'https://tienphong.vn/xe/': 'Xe'
 }
 
 SOURCES = [
-    {"id": 1, "url": "https://vnexpress.net", "name": "VN EXPRESS"},
-    {"id": 2, "url": "https://nhandan.vn", "name": "NHAN DAN"},
-    {"id": 3, "url": "https://tienphong.vn", "name": "TIEN PHONG"}
+    {"_id": str(uuid.uuid4()), "url": "https://vnexpress.net", "name": "VN EXPRESS"},
+    {"_id": str(uuid.uuid4()), "url": "https://nhandan.vn", "name": "NHAN DAN"},
+    {"_id": str(uuid.uuid4()), "url": "https://tienphong.vn", "name": "TIEN PHONG"}
 ]
 
-def initialize_categories():
-    all_categories = {**VNEXPRESS_CATEGORIES, **NHANDAN_CATEGORIES, **TIENPHONG_CATEGORIES}
-    id_counter = 1
-    for code, name in all_categories.items():
-        source = next((s for s in SOURCES if code in (VNEXPRESS_CATEGORIES if s['id'] == 1 else NHANDAN_CATEGORIES if s['id'] == 2 else TIENPHONG_CATEGORIES)), None)
-        if not source or categories_collection.find_one({'code': code}):
-            continue
-        category_data = {'id': id_counter, 'code': code, 'name': name, 'source': source}
-        categories_collection.insert_one(category_data)
-        id_counter += 1
+def initialize_sources():
+    for source in SOURCES:
+        if not sources_collection.find_one({'_id': source['_id']}):
+            sources_collection.insert_one(source)
 
-def get_category_info(category_code):
-    category = categories_collection.find_one({'code': category_code})
-    return category and {k: category[k] for k in ['_id', 'id', 'code', 'name', 'source']}
+def initialize_categories():
+    initialize_sources()
+    all_categories = {**VNEXPRESS_CATEGORIES, **NHANDAN_CATEGORIES, **TIENPHONG_CATEGORIES}
+    for url, name in all_categories.items():
+        source = next((s for s in SOURCES if url.startswith(s['url'])), None)
+        if not source or categories_collection.find_one({'url': url}):
+            continue
+        category_data = {
+            '_id': str(uuid.uuid4()),
+            'name': name,
+            'source_id': source['_id'],
+            'url': url
+        }
+        categories_collection.insert_one(category_data)
+
+def get_category_info(category_url):
+    category = categories_collection.find_one({'url': category_url})
+    if category:
+        source = sources_collection.find_one({'_id': category['source_id']})
+        return {
+            '_id': category['_id'],
+            'name': category['name'],
+            'source': source,
+            'url': category['url']
+        }
+    return None
 
 def get_last_crawl_time(source):
     metadata = crawl_metadata.find_one({'source': source})
@@ -67,7 +126,7 @@ def get_last_crawl_time(source):
 def update_last_crawl_time(source):
     crawl_metadata.update_one({'source': source}, {'$set': {'last_crawl_time': datetime.now()}}, upsert=True)
 
-def crawl_vnexpress_category(category_url, category_code, collection, last_crawl_time):
+def crawl_vnexpress_category(category_url, collection, last_crawl_time):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -78,7 +137,7 @@ def crawl_vnexpress_category(category_url, category_code, collection, last_crawl
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         articles = soup.find_all('article', class_='item-news')[:10]
-        category_info = get_category_info(category_code)
+        category_info = get_category_info(category_url)
 
         for article in articles:
             title_tag = article.find('h3', class_='title-news')
@@ -106,9 +165,9 @@ def crawl_vnexpress_category(category_url, category_code, collection, last_crawl
             description = description_tag.text.strip() if description_tag else ''
             content_tag = article_soup.find('article', class_='fck_detail')
             content = content_tag.get_text(separator='\n', strip=True) if content_tag else ''
-            images = [img.get('data-src') or img.get('src') for img in article_soup.find_all('img', class_='lazy') 
-                      if (img.get('data-src') or img.get('src')) and (img.get('data-src') or img.get('src')).startswith('http')]
-            
+            images = [img.get('data-src') or img.get('src') for img in article_soup.find_all('img', class_='lazy')
+                     if (img.get('data-src') or img.get('src')) and (img.get('data-src') or img.get('src')).startswith('http')]
+
             author = None
             for tag in [article_soup.find('p', class_='author'), article_soup.find('strong', class_='author')]:
                 if tag:
@@ -119,22 +178,31 @@ def crawl_vnexpress_category(category_url, category_code, collection, last_crawl
                 author = last_p.find('strong').text.strip() if last_p and last_p.find('strong') else ' '.join(content.split()[-2:])
 
             article_data = {
-                'title': title, 'link': link, 'description': description, 'content': content, 'category_id': category_info,
-                'publish_date': publish_date, 'images': images, 'author': author, 'crawl_date': datetime.now()
+                '_id': str(uuid.uuid4()),
+                'title': title,
+                'link': link,
+                'description': description,
+                'content': content,
+                'category': category_info,
+                'publish_date': publish_date,
+                'images': images,
+                'author': author,
+                'crawl_date': datetime.now()
             }
             collection.insert_one(article_data)
             logger.info(f"Đã lưu: {title}")
 
     except Exception as e:
-        logger.error(f"Lỗi khi crawl danh mục {category_code}: {str(e)}")
-def crawl_nhandan_category(category_url, category_code, collection, last_crawl_time):
+        logger.error(f"Lỗi khi crawl danh mục {category_url}: {str(e)}")
+
+def crawl_nhandan_category(category_url, collection, last_crawl_time):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
         response = requests.get(category_url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         articles = soup.find_all('article', class_='story')[:10]
-        category_info = get_category_info(category_code)
+        category_info = get_category_info(category_url)
 
         for article in articles:
             title_tag = article.find(['h2', 'h3', 'h4'], class_='story__heading')
@@ -147,8 +215,8 @@ def crawl_nhandan_category(category_url, category_code, collection, last_crawl_t
 
             article_response = requests.get(link, headers=headers)
             article_soup = BeautifulSoup(article_response.content, 'html.parser')
-            date_tag = article_soup.find('time', class_='time')
             publish_date = None
+            date_tag = article_soup.find('time', class_='time')
             if date_tag:
                 try:
                     date_clean = date_tag.text.strip().split('ngày ')[1].split(' - ')[0].strip()
@@ -166,8 +234,8 @@ def crawl_nhandan_category(category_url, category_code, collection, last_crawl_t
             if content_div:
                 for unwanted in content_div.find_all(['script', 'style', 'table', 'div', 'aside']):
                     unwanted.decompose()
-            images = [img.get('data-src') or img.get('src') for img in article_soup.find_all('img') 
-                      if (img.get('data-src') or img.get('src')) and (img.get('data-src') or img.get('src')).startswith('http')]
+            images = [img.get('data-src') or img.get('src') for img in article_soup.find_all('img')
+                     if (img.get('data-src') or img.get('src')) and (img.get('data-src') or img.get('src')).startswith('http')]
 
             author = None
             author_source = article_soup.find('div', class_='article__author-source')
@@ -181,23 +249,31 @@ def crawl_nhandan_category(category_url, category_code, collection, last_crawl_t
                 author = last_p.text.split('-')[-1].strip() if '-' in last_p.text else None
 
             article_data = {
-                'title': title, 'link': link, 'description': description, 'content': content, 'category_id': category_info,
-                'publish_date': publish_date, 'images': images, 'author': author, 'crawl_date': datetime.now()
+                '_id': str(uuid.uuid4()),
+                'title': title,
+                'link': link,
+                'description': description,
+                'content': content,
+                'category': category_info,
+                'publish_date': publish_date,
+                'images': images,
+                'author': author,
+                'crawl_date': datetime.now()
             }
             collection.insert_one(article_data)
             logger.info(f"Đã lưu: {title}")
 
     except Exception as e:
-        logger.error(f"Lỗi khi crawl danh mục {category_code}: {str(e)}")
+        logger.error(f"Lỗi khi crawl danh mục {category_url}: {str(e)}")
 
-def crawl_tienphong_category(category_url, category_code, collection, last_crawl_time):
+def crawl_tienphong_category(category_url, collection, last_crawl_time):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
         response = requests.get(category_url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         articles = soup.find_all('article', class_='story')[:10]
-        category_info = get_category_info(category_code)
+        category_info = get_category_info(category_url)
 
         for article in articles:
             title_tag = article.find(['h2', 'h3', 'h5'], class_='story__heading')
@@ -226,7 +302,6 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
             title = title_tag.text.strip()
             description_tag = article_soup.find('div', class_='article__sapo') or article_soup.find('h2', class_='article__sapo')
             description = description_tag.text.strip() if description_tag else ''
-            
             content_div = article_soup.find('div', class_='article__body')
             if content_div:
                 for unwanted in content_div.find_all(['script', 'style', 'aside', 'div', 'table']):
@@ -234,10 +309,9 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
                 content = content_div.get_text(separator='\n', strip=True)
             else:
                 content = ''
-                
-            images = [img['data-src'] for img in (content_div or article_soup).find_all('img', {'data-src': True}) 
-                      if img['data-src'].startswith('http')] or ([article_soup.find('meta', property='og:image')['content']] 
-                                                                 if article_soup.find('meta', property='og:image') else [])
+            images = [img['data-src'] for img in (content_div or article_soup).find_all('img', {'data-src': True})
+                     if img['data-src'].startswith('http')] or ([article_soup.find('meta', property='og:image')['content']]
+                     if article_soup.find('meta', property='og:image') else [])
 
             author_div = article_soup.find('div', class_='article__author')
             author = author_div.find('span', class_='name cms-author').text.strip() if author_div and author_div.find('span', class_='name cms-author') else None
@@ -245,42 +319,35 @@ def crawl_tienphong_category(category_url, category_code, collection, last_crawl
                 author = meta_author['content']
 
             article_data = {
-                'title': title, 'link': link, 'description': description, 'content': content, 'category_id': category_info,
-                'publish_date': publish_date, 'images': images, 'author': author, 'crawl_date': datetime.now(),
+                '_id': str(uuid.uuid4()),
+                'title': title,
+                'link': link,
+                'description': description,
+                'content': content,
+                'category': category_info,
+                'publish_date': publish_date,
+                'images': images,
+                'author': author,
+                'crawl_date': datetime.now()
             }
             collection.insert_one(article_data)
             logger.info(f"Đã lưu: {title}")
 
     except Exception as e:
-        logger.error(f"Lỗi khi crawl danh mục {category_code}: {str(e)}")
+        logger.error(f"Lỗi khi crawl danh mục {category_url}: {str(e)}")
 
 def crawl_all_sources(articles_collection):
     logger.info(f"Bắt đầu crawl lúc {datetime.now()}")
-    for base_url, categories, crawl_func, source in [
-        ('https://vnexpress.net/', VNEXPRESS_CATEGORIES, crawl_vnexpress_category, 'vnexpress'),
-        ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
-        ('https://tienphong.vn/', TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
+    for categories, crawl_func, source in [
+        (VNEXPRESS_CATEGORIES, crawl_vnexpress_category, 'vnexpress'),
+        (NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
+        (TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
     ]:
         last_crawl_time = get_last_crawl_time(source)
-        for code in categories:
-            crawl_func(f"{base_url}{code}", code, articles_collection, last_crawl_time)
+        for url in categories.keys():
+            crawl_func(url, articles_collection, last_crawl_time)
         update_last_crawl_time(source)
     logger.info("Hoàn thành crawl")
-
-
-# def crawl_all_sources(articles_collection):
-#     logger.info(f"Bắt đầu crawl lúc {datetime.now()}")
-#     for base_url, categories, crawl_func, source in [
-#         ('https://vnexpress.net/', VNEXPRESS_CATEGORIES, crawl_vnexpress_category, 'vnexpress'),
-#         ('https://nhandan.vn/', NHANDAN_CATEGORIES, crawl_nhandan_category, 'nhandan'),
-#         ('https://tienphong.vn/', TIENPHONG_CATEGORIES, crawl_tienphong_category, 'tienphong')
-#     ]:
-#         # Đặt last_crawl_time là 3 ngày trước ngay trong hàm
-#         last_crawl_time = datetime.now() - timedelta(days=3)
-#         for code in categories:
-#             crawl_func(f"{base_url}{code}", code, articles_collection, last_crawl_time)
-#         update_last_crawl_time(source)
-#     logger.info("Hoàn thành crawl")
 
 def main():
     initialize_categories()
