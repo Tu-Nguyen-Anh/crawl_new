@@ -47,8 +47,9 @@ def get_categories():
     categories = list(categories_collection.find())
     logger.info("Danh sách categories hiện tại trong database:")
     for cat in categories:
-        logger.info(f"- {cat['url']} (Tên: {cat['name']}, Nguồn: {cat['source']['name']})")
-    return [cat['url'] for cat in categories]
+        keywords_str = ', '.join(cat.get('keyword', [])) if cat.get('keyword') else 'None'
+        logger.info(f"- {cat['url']} (Tên: {cat['name']}, Nguồn: {cat['source']['name']}, Keywords: {keywords_str})")
+    return categories
 
 def get_source_from_url(url):
     sources = get_sources()
@@ -71,11 +72,13 @@ def update_last_crawl_time(category_url):
 def get_category_info(category_url):
     category = categories_collection.find_one({'url': category_url})
     if category:
+        # Đảm bảo trường 'keyword' luôn tồn tại, mặc định là danh sách rỗng nếu không có
         return {
             '_id': category['_id'],
             'name': category['name'],
             'source': category['source'],
-            'url': category['url']
+            'url': category['url'],
+            'keyword': category.get('keyword', [])
         }
     source = get_source_from_url(category_url)
     if source:
@@ -83,8 +86,10 @@ def get_category_info(category_url):
             '_id': str(uuid.uuid4()),
             'name': 'Unknown',
             'source': source,
-            'url': category_url
+            'url': category_url,
+            'keyword': []
         }
+    logger.error(f"Không tìm thấy danh mục cho URL: {category_url}")
     return None
 
 def extract_article_urls(category_url):
@@ -97,7 +102,6 @@ def extract_article_urls(category_url):
         source = get_source_from_url(category_url)
         base_url = source['url'] if source else 'https://' + category_url.split('/')[2]
 
-        # Cách 1: Tìm cụ thể theo class
         if 'cafebiz.vn' in category_url:
             news_boxes = soup.find_all('div', class_='cfbiznews_box')
             for box in news_boxes:
@@ -145,8 +149,7 @@ def extract_article_urls(category_url):
                         full_url = href if href.startswith('http') else f"{base_url}{href}"
                         article_urls.append(full_url)
 
-        # Cách 2: Tìm tổng quát tất cả thẻ <a> và lọc bằng regex (dùng làm fallback)
-        if not article_urls:  # Nếu cách 1 không tìm thấy, thử cách 2
+        if not article_urls:
             for a_tag in soup.find_all('a', href=True):
                 href = a_tag['href']
                 if not href or 'javascript' in href or 'zalo.me' in href or 'facebook.com' in href:
@@ -165,7 +168,7 @@ def extract_article_urls(category_url):
                     if parent_article and (parent_article.find('div', class_='story__meta') or parent_article.find('figure')):
                         full_url = href if href.startswith('http') else f"{base_url}{href}"
                         article_urls.append(full_url)
-                elif re.match(r'.*\.html$|/.*-\d+$', href):  # Cho các nguồn khác
+                elif re.match(r'.*\.html$|/.*-\d+$', href):
                     full_url = href if href.startswith('http') else f"{base_url}{href}"
                     article_urls.append(full_url)
 
@@ -177,14 +180,34 @@ def extract_article_urls(category_url):
         return []
 
 
+def check_keywords_match(title, content, keywords):
+    """Kiểm tra xem có từ khóa nào trong keywords xuất hiện chính xác trong title hoặc content"""
+    # Log danh sách từ khóa nhận được để kiểm tra
+    logger.info(f"Danh sách từ khóa nhận được: {keywords}")
+
+    if not keywords:  # Nếu không có từ khóa, trả về True (lấy tất cả bài viết)
+        logger.info("Không có từ khóa nào trong danh sách, sẽ lấy tất cả bài viết")
+        return True
+
+    # Kết hợp title và content thành một chuỗi
+    full_text = f"{title}\n{content}"
+    lines = full_text.split('\n')
+
+    for i, line in enumerate(lines, 1):
+        for keyword in keywords:
+            # Sử dụng regex với \b để khớp từ độc lập, giữ nguyên dấu và chữ cái
+            pattern = r'\b' + re.escape(keyword) + r'\b'
+            if re.search(pattern, line):
+                location = "title" if i == 1 else "content"
+                logger.info(f"Khớp keyword '{keyword}' tại {location}, dòng {i}: {line.strip()}")
+                return True
+    logger.info(f"Không tìm thấy từ khóa nào trong '{title}' hoặc nội dung")
+    return False
+
 def parse_article(article_url, category_info, last_crawl_time):
     try:
         session = requests.Session()
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=2,
-            status_forcelist=[500, 502, 503, 504]
-        )
+        retry_strategy = Retry(total=3, backoff_factor=2, status_forcelist=[500, 502, 503, 504])
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("https://", adapter)
 
@@ -201,77 +224,28 @@ def parse_article(article_url, category_info, last_crawl_time):
             title_tag = soup.find('title')
             title = title_tag.get_text(strip=True) if title_tag else None
             if not title:
+                logger.info(f"Bài viết {article_url} không có title, bỏ qua")
                 return None
 
-        publish_date = article.publish_date
-        if not publish_date:
-            publish_date = datetime.now()
-        else:
-            try:
-                publish_date = parser.parse(str(publish_date)).replace(tzinfo=None)
-            except Exception as e:
-                publish_date = datetime.now()
-
         content = article.text.strip() if article.text else ''
-        # Kiểm tra content: loại bỏ nếu null, rỗng hoặc dưới 50 từ
         if not content or len(content.split()) < 50:
+            logger.info(f"Bài viết {article_url} không có nội dung hoặc quá ngắn, bỏ qua")
             return None
 
-        description = article.meta_description if article.meta_description else (content[:200] if content else '')
+        # Kiểm tra từ khóa trước khi tiếp tục
+        if not check_keywords_match(title, content, category_info['keyword']):
+            logger.info(f"Bài viết {article_url} không chứa keyword nào trong {category_info['keyword']}")
+            return None
+
+        # Tiếp tục xử lý và trả về dữ liệu bài viết
+        publish_date = article.publish_date or datetime.now()
+        try:
+            publish_date = parser.parse(str(publish_date)).replace(tzinfo=None)
+        except Exception:
+            publish_date = datetime.now()
+
+        description = article.meta_description or content[:200]
         images = [article.top_image] if article.top_image else list(article.images)
-
-        # Trích xuất tác giả
-        author = None
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        if 'cafebiz.vn' in article_url:
-            # Luôn lấy từ dòng cuối của content cho cafebiz.vn
-            last_line = content.split('\n')[-1].strip()
-            if last_line:
-                author = last_line  # Lấy toàn bộ dòng cuối làm author
-            if not author or author.lower() == "https":  # Nếu vẫn là "Https" hoặc rỗng, đặt mặc định
-                author = 'cafebiz'
-        else:
-            # Logic cho các nguồn khác
-            author = article.authors[0] if article.authors else None
-            if not author:
-                if 'vneconomy.vn' in article_url:
-                    author_tag = soup.find('span', class_='author') or soup.find('meta', {'name': 'author'})
-                    if author_tag:
-                        author = author_tag.get_text(strip=True) if author_tag.name == 'span' else author_tag.get('content', '').strip()
-                    if author == "Https":
-                        author = 'vneconomy'
-                elif 'thanhnien.vn' in article_url:
-                    author_tag = soup.find('div', class_='detail-author') or soup.find('meta', {'name': 'author'})
-                    if author_tag:
-                        author = author_tag.get_text(strip=True) if author_tag.name == 'div' else author_tag.get('content', '').strip()
-                    if author == "Https":
-                        author = 'thanhnien'
-                elif 'vietnamnet.vn' in article_url:
-                    author_tag = soup.find('p', class_='article-detail-author__info')
-                    if author_tag:
-                        name_tag = author_tag.find('span', class_='name')
-                        author = name_tag.get_text(strip=True) if name_tag else None
-                    if author == "Https":
-                        author = 'vietnamnet'
-                elif 'nguoiquansat.vn' in article_url:
-                    author_tag = soup.find('span', class_='author') or soup.find('meta', {'name': 'author'})
-                    if author_tag:
-                        author = author_tag.get_text(strip=True) if author_tag.name == 'span' else author_tag.get('content', '').strip()
-                    if author == "Https":
-                        author = 'nguoiquansat'
-
-            # Fallback cho các nguồn khác nếu không tìm thấy qua HTML
-            if not author and content:
-                last_line = content.split('\n')[-1].strip()
-                if last_line.startswith('Theo '):
-                    author = last_line.replace('Theo ', '').strip()
-                else:
-                    author = last_line.strip()
-
-        # Nếu không có nội dung hoặc dòng cuối rỗng, đặt author là None
-        if not author:
-            author = None
 
         article_data = {
             '_id': str(uuid.uuid4()),
@@ -282,7 +256,7 @@ def parse_article(article_url, category_info, last_crawl_time):
             'category': category_info,
             'publish_date': publish_date,
             'images': images,
-            'author': author,
+            'author': None,  # Tạm bỏ qua phần tác giả để tập trung vào từ khóa
             'crawl_date': datetime.now()
         }
         return article_data
@@ -297,7 +271,6 @@ def crawl_category(category_url, articles_collection):
         logger.error(f"Không xác định được danh mục cho {category_url}")
         return
 
-    # Sử dụng crawler riêng biệt cho các nguồn cụ thể
     if 'tienphong.vn' in category_url:
         tienphong_crawler.crawl_tienphong_category(category_url, articles_collection, last_crawl_time, get_category_info)
     elif 'nhandan.vn' in category_url:
@@ -305,7 +278,6 @@ def crawl_category(category_url, articles_collection):
     elif 'vnexpress.net' in category_url:
         vnexpress_crawler.crawl_vnexpress_category(category_url, articles_collection, last_crawl_time, get_category_info)
     else:
-        # Logic crawl mặc định cho các nguồn khác
         logger.info(f"Bắt đầu crawl danh mục: {category_url}, lần crawl cuối: {last_crawl_time}")
         article_urls = extract_article_urls(category_url)
 
@@ -320,10 +292,10 @@ def crawl_category(category_url, articles_collection):
     update_last_crawl_time(category_url)
 
 def crawl_all_categories(articles_collection):
-    category_urls = get_categories()
+    categories = get_categories()
     logger.info(f"Bắt đầu crawl tất cả danh mục lúc {datetime.now()}")
-    for category_url in category_urls:
-        crawl_category(category_url, articles_collection)
+    for category in categories:
+        crawl_category(category['url'], articles_collection)
     logger.info("Hoàn thành crawl tất cả danh mục.")
 
 def main():
