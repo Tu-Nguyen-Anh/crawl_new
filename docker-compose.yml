@@ -11,8 +11,8 @@ services:
       - TZ=Asia/Ho_Chi_Minh
     command: python main.py
     networks:
-      - english-vocabulary-network
+      - mongodb_default
 
 networks:
-  english-vocabulary-network:
+  mongodb_default:
     external: true
