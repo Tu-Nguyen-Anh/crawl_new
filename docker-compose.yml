@@ -7,6 +7,8 @@ services:
       - "8008:8008"
     volumes:
       - .:/app
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
     command: python main.py
     networks:
       - english-vocabulary-network
