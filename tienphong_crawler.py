@@ -120,14 +120,3 @@ def crawl_tienphong_category(category_url, collection, categories_collection, la
         logger.error(f"Lỗi khi crawl danh mục Tiền Phong {category_url}: {str(e)}")
 
 
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-    from pymongo import MongoClient
-    from datetime import datetime, timedelta
-
-    client = MongoClient('mongodb://localhost:27017/')
-    db = client['olh_news']
-    articles_collection = db['articles']
-    categories_collection = db['categories']
-
-    last_crawl = datetime.now() - timedelta(days=1)
