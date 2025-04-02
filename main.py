@@ -25,9 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Kết nối MongoDB và tạo index
-# client = MongoClient('mongodb://localhost:27017/')
 client = MongoClient('mongodb://mongo:27017')
-
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
@@ -45,11 +43,17 @@ USER_AGENTS = [
     'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1 Mobile/15E148 Safari/604.1'
 ]
 
-# Tái sử dụng session requests
+# Tái sử dụng session requests với retry strategy cải tiến
 session = requests.Session()
-retry_strategy = Retry(total=3, backoff_factor=2, status_forcelist=[500, 502, 503, 504])
+retry_strategy = Retry(
+    total=5,
+    backoff_factor=2,
+    status_forcelist=[500, 502, 503, 504, 104],
+    method_whitelist=["HEAD", "GET", "OPTIONS"]
+)
 adapter = HTTPAdapter(max_retries=retry_strategy)
 session.mount("https://", adapter)
+session.mount("http://", adapter)
 
 def get_random_headers():
     return {'User-Agent': random.choice(USER_AGENTS)}
@@ -58,7 +62,6 @@ def get_random_headers():
 def get_sources():
     return list(sources_collection.find())
 
-@lru_cache(maxsize=1)
 def get_categories():
     categories = list(categories_collection.find())
     return [cat['url'] for cat in categories]
@@ -112,7 +115,7 @@ def extract_article_urls(category_url):
     try:
         response = session.get(category_url, headers=get_random_headers(), timeout=10)
         response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')  # Bỏ from_encoding
+        soup = BeautifulSoup(response.content, 'html.parser')
 
         article_urls = set()
         source = get_source_from_url(category_url)
@@ -155,12 +158,14 @@ def extract_article_urls(category_url):
     except Exception as e:
         logger.error(f"Lỗi khi trích xuất URL từ {category_url}: {str(e)}")
         return []
+
 def parse_article(args):
     article_url, category_info, last_crawl_time = args
     try:
-        response = session.get(article_url, headers=get_random_headers(), timeout=30)
+        time.sleep(random.uniform(1, 3))  # Thêm delay ngẫu nhiên
+        response = session.get(article_url, headers=get_random_headers(), timeout=60)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')  # Bỏ from_encoding
+        soup = BeautifulSoup(response.text, 'html.parser')
 
         article = Article(article_url, language='vi')
         article.set_html(response.text)
@@ -231,6 +236,7 @@ def parse_article(args):
     except Exception as e:
         logger.error(f"Lỗi khi phân tích bài viết {article_url}: {str(e)}")
         return None
+
 def crawl_category(category_url, articles_collection):
     last_crawl_time = get_last_crawl_time(category_url)
     category_info = get_category_info(category_url)
@@ -263,7 +269,7 @@ def crawl_category(category_url, articles_collection):
     update_last_crawl_time(category_url)
 
 def crawl_all_categories(articles_collection):
-    category_urls = get_categories()
+    category_urls = get_categories()  # Lấy danh mục mới nhất mỗi lần
     logger.info(f"Bắt đầu crawl tất cả danh mục lúc {datetime.now()}")
     for category_url in category_urls:
         crawl_category(category_url, articles_collection)
