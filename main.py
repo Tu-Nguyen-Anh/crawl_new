@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Kết nối MongoDB
-client = MongoClient('mongodb://mongodb:23781/')
+client = MongoClient('mongodb://mongo:27017/')
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
@@ -190,7 +190,7 @@ def extract_article_urls(category_url):
                     article_urls.append(full_url)
 
         unique_urls = list(set(article_urls))[:30]
-        logger.info(f"Tìm thấy {len(unique_urls)} URL từ {category_url}: {unique_urls}")
+        logger.info(f"Tìm thấy {len(unique_urls)} URL từ {category_url}")
         return unique_urls
     except Exception as e:
         logger.error(f"Lỗi khi trích xuất URL từ {category_url}: {str(e)}")
@@ -340,10 +340,13 @@ def crawl_category(category_url, articles_collection):
         # Logic crawl mặc định cho các nguồn khác
         article_urls = extract_article_urls(category_url)
         for url in article_urls:
-            if articles_collection.find_one({'link': url}):
-                continue
             article_data = parse_article(url, category_info, last_crawl_time)
             if article_data:
+                # Kiểm tra publish_date so với last_crawl_time
+                if article_data['publish_date'] < last_crawl_time:
+                    logger.info(f"Bỏ qua bài viết {article_data['title']} vì publish_date ({article_data['publish_date']}) < last_crawl_time ({last_crawl_time})")
+                    continue
+                # Chỉ lưu nếu publish_date >= last_crawl_time
                 articles_collection.insert_one(article_data)
                 logger.info(f"Đã lưu: {article_data['title']}")
 
@@ -360,7 +363,7 @@ def crawl_all_categories(articles_collection):
 
 def main():
     crawl_all_categories(articles_collection)
-    schedule.every(1).minutes.do(crawl_all_categories, articles_collection)
+    schedule.every(2).minutes.do(crawl_all_categories, articles_collection)
 
     while True:
         try:
