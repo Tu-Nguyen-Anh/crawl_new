@@ -6,20 +6,48 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def crawl_nhandan_category(category_url, collection, last_crawl_time, get_category_info):
+
+def crawl_nhandan_category(category_url, collection, categories_collection, last_crawl_time):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
+        # Lấy thông tin category từ database dựa trên URL
+        category_doc = categories_collection.find_one({"url": category_url})
+        if not category_doc:
+            logger.error(f"Không tìm thấy category trong database cho URL: {category_url}")
+            return
+
+        category_info = {
+            '_id': str(category_doc['_id']),
+            'name': category_doc['name'],
+            'source': category_doc['source'],
+            'url': category_doc['url']
+        }
+
+        keywords = []
+        check_keywords = False
+        if "keyword" in category_doc and category_doc["keyword"] and len(category_doc["keyword"]) > 0:
+            keywords = [kw.lower() for kw in category_doc["keyword"]]
+            check_keywords = True
+        else:
+            logger.info(f"Không có keyword cho category {category_url}, sẽ crawl tất cả bài viết")
+
         response = requests.get(category_url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         articles = soup.find_all('article', class_='story')[:30]
-        category_info = get_category_info(category_url)
 
         for article in articles:
             title_tag = article.find(['h2', 'h3', 'h4'], class_='story__heading')
-            if not title_tag:
+            if not title_tag or not hasattr(title_tag, 'text'):
+                logger.debug(f"Bỏ qua bài viết không có title_tag hợp lệ tại {category_url}")
                 continue
-            link = title_tag.find('a', class_='cms-link')['href']
+
+            link_tag = title_tag.find('a', class_='cms-link')
+            if not link_tag or 'href' not in link_tag.attrs:
+                logger.debug(f"Bỏ qua bài viết không có link hợp lệ tại {category_url}")
+                continue
+
+            link = link_tag['href']
             link = 'https://nhandan.vn' + link if not link.startswith('http') else link
             if collection.find_one({'link': link}):
                 continue
@@ -28,36 +56,52 @@ def crawl_nhandan_category(category_url, collection, last_crawl_time, get_catego
             article_soup = BeautifulSoup(article_response.content, 'html.parser')
             publish_date = None
             date_tag = article_soup.find('time', class_='time')
-            if date_tag:
+            if date_tag and hasattr(date_tag, 'text'):
                 try:
-                    date_clean = date_tag.text.strip().split('ngày ')[1].split(' - ')[0].strip()
-                    time_clean = date_tag.text.strip().split(' - ')[1].strip()
+                    date_text = date_tag.text.strip()
+                    date_clean = date_text.split('ngày ')[1].split(' - ')[0].strip()
+                    time_clean = date_text.split(' - ')[1].strip()
                     publish_date = datetime.strptime(f"{date_clean} {time_clean}", '%d/%m/%Y %H:%M')
-                except (ValueError, IndexError):
+                except (ValueError, IndexError, AttributeError):
+                    logger.debug(f"Bỏ qua bài viết do lỗi định dạng ngày tại {link}")
                     continue
             if publish_date and publish_date <= last_crawl_time:
                 continue
 
-            title = title_tag.text.strip()
-            description = (article_soup.find('div', class_='article__sapo') or '').text.strip()
+            title = title_tag.text.strip() if title_tag else ''
+            description_tag = article_soup.find('div', class_='article__sapo')
+            description = description_tag.text.strip() if description_tag and hasattr(description_tag, 'text') else ''
+
             content_div = article_soup.find('div', class_='article__body')
-            content = content_div.get_text(separator='\n', strip=True) if content_div else ''
+            content = content_div.get_text(separator='\n', strip=True) if content_div and hasattr(content_div,
+                                                                                                  'text') else ''
             if content_div:
                 for unwanted in content_div.find_all(['script', 'style', 'table', 'div', 'aside']):
                     unwanted.decompose()
+
             images = [img.get('data-src') or img.get('src') for img in article_soup.find_all('img')
-                     if (img.get('data-src') or img.get('src')) and (img.get('data-src') or img.get('src')).startswith('http')]
+                      if (img.get('data-src') or img.get('src')) and (img.get('data-src') or img.get('src')).startswith(
+                    'http')]
+
+            if check_keywords:
+                title_lower = title.lower()
+                content_lower = content.lower()
+                has_keyword = any(keyword in title_lower or keyword in content_lower for keyword in keywords)
+                if not has_keyword:
+                    continue
 
             author = None
             author_source = article_soup.find('div', class_='article__author-source')
             if author_source:
-                for tag in [author_source.find('a', class_='name'), author_source.find('p', class_='name'), author_source.find('span', class_='name')]:
-                    if tag:
+                for tag in [author_source.find('a', class_='name'), author_source.find('p', class_='name'),
+                            author_source.find('span', class_='name')]:
+                    if tag and hasattr(tag, 'text'):
                         author = tag.text.strip()
                         break
             if not author and content_div and content_div.find_all('p'):
                 last_p = content_div.find_all('p')[-1]
-                author = last_p.text.split('-')[-1].strip() if '-' in last_p.text else None
+                author = last_p.text.split('-')[-1].strip() if last_p and hasattr(last_p,
+                                                                                  'text') and '-' in last_p.text else None
 
             article_data = {
                 '_id': str(uuid.uuid4()),
@@ -77,20 +121,15 @@ def crawl_nhandan_category(category_url, collection, last_crawl_time, get_catego
     except Exception as e:
         logger.error(f"Lỗi khi crawl danh mục Nhân Dân {category_url}: {str(e)}")
 
+
 if __name__ == '__main__':
-    # This block is for testing purposes only
     logging.basicConfig(level=logging.INFO)
     from pymongo import MongoClient
     from datetime import datetime, timedelta
+
     client = MongoClient('mongodb://localhost:27017/')
     db = client['olh_news']
     articles_collection = db['articles']
-
-    # Dummy function for testing
-    def dummy_get_category_info(url):
-        return {'_id': 'some_id', 'name': 'Chính trị', 'source': {'name': 'NHAN DAN'}, 'url': url}
+    categories_collection = db['categories']
 
     last_crawl = datetime.now() - timedelta(days=1)
-    # Example usage for testing with a specific category URL
-    test_category_url = 'https://nhandan.vn/chinhtri/'
-    crawl_nhandan_category(test_category_url, articles_collection, last_crawl, dummy_get_category_info)

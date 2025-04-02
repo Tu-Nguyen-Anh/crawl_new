@@ -7,7 +7,7 @@ services:
       - "8008:8008"
     volumes:
       - .:/app
-    command: python crawl.py
+    command: python main.py
     networks:
       - english-vocabulary-network
 

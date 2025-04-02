@@ -6,20 +6,50 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def crawl_tienphong_category(category_url, collection, last_crawl_time, get_category_info):
+
+def crawl_tienphong_category(category_url, collection, categories_collection, last_crawl_time):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
+        # Lấy thông tin category từ database dựa trên URL
+        category_doc = categories_collection.find_one({"url": category_url})
+        if not category_doc:
+            logger.error(f"Không tìm thấy category trong database cho URL: {category_url}")
+            return
+
+        # Chuẩn bị thông tin category để lưu vào article
+        category_info = {
+            '_id': str(category_doc['_id']),
+            'name': category_doc['name'],
+            'source': category_doc['source'],
+            'url': category_doc['url']
+        }
+
+        # Chuẩn bị keywords
+        keywords = []
+        check_keywords = False
+        if "keyword" in category_doc and category_doc["keyword"] and len(category_doc["keyword"]) > 0:
+            keywords = [kw.lower() for kw in category_doc["keyword"]]
+            check_keywords = True
+        else:
+            logger.info(f"Không có keyword cho category {category_url}, sẽ crawl tất cả bài viết")
+
         response = requests.get(category_url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         articles = soup.find_all('article', class_='story')[:30]
-        category_info = get_category_info(category_url)
 
         for article in articles:
             title_tag = article.find(['h2', 'h3', 'h5'], class_='story__heading')
-            if not title_tag:
+            if not title_tag or not hasattr(title_tag, 'text'):
+                logger.debug(f"Bỏ qua bài viết không có title_tag hợp lệ tại {category_url}")
                 continue
-            link = title_tag.find('a', class_='cms-link')['href']
+
+            link_tag = title_tag.find('a', class_='cms-link')
+            if not link_tag or 'href' not in link_tag.attrs:
+                logger.debug(f"Bỏ qua bài viết không có link hợp lệ tại {category_url}")
+                continue
+
+            link = link_tag['href']
             link = 'https://tienphong.vn' + link if not link.startswith('http') else link
             if collection.find_one({'link': link}):
                 continue
@@ -39,9 +69,11 @@ def crawl_tienphong_category(category_url, collection, last_crawl_time, get_cate
             if publish_date and publish_date <= last_crawl_time:
                 continue
 
-            title = title_tag.text.strip()
-            description_tag = article_soup.find('div', class_='article__sapo') or article_soup.find('h2', class_='article__sapo')
-            description = description_tag.text.strip() if description_tag else ''
+            title = title_tag.text.strip() if title_tag else ''
+            description_tag = article_soup.find('div', class_='article__sapo') or article_soup.find('h2',
+                                                                                                    class_='article__sapo')
+            description = description_tag.text.strip() if description_tag and hasattr(description_tag, 'text') else ''
+
             content_div = article_soup.find('div', class_='article__body')
             if content_div:
                 for unwanted in content_div.find_all(['script', 'style', 'aside', 'div', 'table']):
@@ -49,12 +81,23 @@ def crawl_tienphong_category(category_url, collection, last_crawl_time, get_cate
                 content = content_div.get_text(separator='\n', strip=True)
             else:
                 content = ''
+
             images = [img['data-src'] for img in (content_div or article_soup).find_all('img', {'data-src': True})
-                     if img['data-src'].startswith('http')] or ([article_soup.find('meta', property='og:image')['content']]
-                     if article_soup.find('meta', property='og:image') else [])
+                      if img['data-src'].startswith('http')] or (
+                         [article_soup.find('meta', property='og:image')['content']]
+                         if article_soup.find('meta', property='og:image') else [])
+
+            # Kiểm tra keyword nếu cần
+            if check_keywords:
+                title_lower = title.lower()
+                content_lower = content.lower()
+                has_keyword = any(keyword in title_lower or keyword in content_lower for keyword in keywords)
+                if not has_keyword:
+                    continue
 
             author_div = article_soup.find('div', class_='article__author')
-            author = author_div.find('span', class_='name cms-author').text.strip() if author_div and author_div.find('span', class_='name cms-author') else None
+            author = author_div.find('span', class_='name cms-author').text.strip() if author_div and author_div.find(
+                'span', class_='name cms-author') else None
             if not author and (meta_author := article_soup.find('meta', property='dable:author')):
                 author = meta_author['content']
 
@@ -76,20 +119,15 @@ def crawl_tienphong_category(category_url, collection, last_crawl_time, get_cate
     except Exception as e:
         logger.error(f"Lỗi khi crawl danh mục Tiền Phong {category_url}: {str(e)}")
 
+
 if __name__ == '__main__':
-    # This block is for testing purposes only
     logging.basicConfig(level=logging.INFO)
     from pymongo import MongoClient
     from datetime import datetime, timedelta
+
     client = MongoClient('mongodb://localhost:27017/')
     db = client['olh_news']
     articles_collection = db['articles']
-
-    # Dummy function for testing
-    def dummy_get_category_info(url):
-        return {'_id': 'some_id', 'name': 'Địa ốc', 'source': {'name': 'TIEN PHONG'}, 'url': url}
+    categories_collection = db['categories']
 
     last_crawl = datetime.now() - timedelta(days=1)
-    # Example usage for testing with a specific category URL
-    test_category_url = 'https://tienphong.vn/dia-oc/'
-    crawl_tienphong_category(test_category_url, articles_collection, last_crawl, dummy_get_category_info)
