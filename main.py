@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Kết nối MongoDB và tạo index
 # client = MongoClient('mongodb://localhost:27017/')
-client = MongoClient('mongodb://10.8.0.1:23781')
+client = MongoClient('mongodb://mongo:27017')
 
 db = client['olh_news']
 articles_collection = db['articles']
