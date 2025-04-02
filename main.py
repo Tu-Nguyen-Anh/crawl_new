@@ -346,12 +346,15 @@ def crawl_category(category_url, articles_collection):
                 if article_data['publish_date'] < last_crawl_time:
                     logger.info(f"Bỏ qua bài viết {article_data['title']} vì publish_date ({article_data['publish_date']}) < last_crawl_time ({last_crawl_time})")
                     continue
-                # Chỉ lưu nếu publish_date >= last_crawl_time
+                # Nếu publish_date >= last_crawl_time, kiểm tra trùng trong database
+                if articles_collection.find_one({'link': url}):
+                    logger.info(f"Bỏ qua bài viết {article_data['title']} vì đã tồn tại trong database")
+                    continue
+                # Lưu bài viết nếu không trùng
                 articles_collection.insert_one(article_data)
                 logger.info(f"Đã lưu: {article_data['title']}")
 
     update_last_crawl_time(category_url)
-
 
 def crawl_all_categories(articles_collection):
     category_urls = get_categories()
