@@ -11,8 +11,10 @@ services:
       - TZ=Asia/Ho_Chi_Minh
     command: python main.py
     networks:
-      - mongodb_default
+      - olh_news_network
+
 
 networks:
-  mongodb_default:
+  olh_news_network:
+    name: olh_news_network
     external: true

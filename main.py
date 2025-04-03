@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Kết nối MongoDB và tạo index
-client = MongoClient('mongodb://localhost:27017')
+client = MongoClient('mongodb://mongo:27017')
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
@@ -43,7 +43,7 @@ crawl_metadata.create_index([("category_url", 1)])
 def get_rabbitmq_connection():
     try:
         connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host='localhost',  # Thay đổi host này nếu RabbitMQ server không chạy trên localhost
+            host='rabbitmq',  # Thay đổi host này nếu RabbitMQ server không chạy trên localhost
             port=5672,  # Port mặc định của RabbitMQ
             heartbeat=600  # Heartbeat để giữ kết nối sống
         ))
