@@ -7,7 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def crawl_nhandan_category(category_url, collection, categories_collection, last_crawl_time):
+def crawl_nhandan_category(category_url, collection, categories_collection, last_crawl_time, publish_to_rabbitmq=None):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
         # Lấy thông tin category từ database dựa trên URL
@@ -115,10 +115,16 @@ def crawl_nhandan_category(category_url, collection, categories_collection, last
                 'author': author,
                 'crawl_date': datetime.now()
             }
-            collection.insert_one(article_data)
-            logger.info(f"Đã lưu (Nhân Dân): {title}")
+
+            try:
+                collection.insert_one(article_data)
+                logger.info(f"Đã lưu (Nhân Dân): {title}")
+
+                # Đẩy vào RabbitMQ nếu hàm được cung cấp
+                if publish_to_rabbitmq:
+                    publish_to_rabbitmq(article_data)
+            except Exception as e:
+                logger.error(f"Lỗi khi lưu bài viết {link}: {str(e)}")
 
     except Exception as e:
         logger.error(f"Lỗi khi crawl danh mục Nhân Dân {category_url}: {str(e)}")
-
-

@@ -14,6 +14,8 @@ from urllib3.util.retry import Retry
 import random
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
+import pika
+import json
 
 # Import các crawler riêng biệt
 import tienphong_crawler
@@ -36,6 +38,66 @@ crawl_metadata = db['crawl_metadata']
 articles_collection.create_index([("link", 1)], unique=True)
 crawl_metadata.create_index([("category_url", 1)])
 
+
+# Kết nối RabbitMQ
+def get_rabbitmq_connection():
+    try:
+        connection = pika.BlockingConnection(pika.ConnectionParameters(
+            host='localhost',  # Thay đổi host này nếu RabbitMQ server không chạy trên localhost
+            port=5672,  # Port mặc định của RabbitMQ
+            heartbeat=600  # Heartbeat để giữ kết nối sống
+        ))
+        return connection
+    except Exception as e:
+        logger.error(f"Lỗi kết nối RabbitMQ: {str(e)}")
+        return None
+
+
+# Hàm để gửi dữ liệu đến RabbitMQ
+def publish_to_rabbitmq(article_data):
+    try:
+        connection = get_rabbitmq_connection()
+        if not connection:
+            logger.error("Không thể kết nối đến RabbitMQ")
+            return False
+
+        channel = connection.channel()
+
+        # Khai báo exchange và queue
+        exchange_name = 'news_exchange'
+        queue_name = 'news_queue'
+        routing_key = 'news.article'
+
+        channel.exchange_declare(exchange=exchange_name, exchange_type='topic', durable=True)
+        channel.queue_declare(queue=queue_name, durable=True)
+        channel.queue_bind(exchange=exchange_name, queue=queue_name, routing_key=routing_key)
+
+        # Chuyển đổi datetime thành string để có thể serialize
+        article_json = article_data.copy()
+        article_json['publish_date'] = article_json['publish_date'].isoformat() if article_json[
+            'publish_date'] else None
+        article_json['crawl_date'] = article_json['crawl_date'].isoformat() if article_json['crawl_date'] else None
+
+        # Chuyển đổi dữ liệu thành JSON và gửi
+        message = json.dumps(article_json)
+        channel.basic_publish(
+            exchange=exchange_name,
+            routing_key=routing_key,
+            body=message,
+            properties=pika.BasicProperties(
+                delivery_mode=2,  # Đảm bảo tin nhắn được lưu trữ
+                content_type='application/json'
+            )
+        )
+
+        logger.info(f"Đã đẩy bài viết vào RabbitMQ: {article_data['title']}")
+        connection.close()
+        return True
+    except Exception as e:
+        logger.error(f"Lỗi khi gửi dữ liệu đến RabbitMQ: {str(e)}")
+        return False
+
+
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15',
@@ -55,16 +117,20 @@ adapter = HTTPAdapter(max_retries=retry_strategy)
 session.mount("https://", adapter)
 session.mount("http://", adapter)
 
+
 def get_random_headers():
     return {'User-Agent': random.choice(USER_AGENTS)}
+
 
 @lru_cache(maxsize=1)
 def get_sources():
     return list(sources_collection.find())
 
+
 def get_categories():
     categories = list(categories_collection.find())
     return [cat['url'] for cat in categories]
+
 
 def get_source_from_url(url):
     sources = get_sources()
@@ -73,9 +139,11 @@ def get_source_from_url(url):
             return source
     return None
 
+
 def get_last_crawl_time(category_url):
     metadata = crawl_metadata.find_one({'category_url': category_url}, {'last_crawl_time': 1})
     return metadata['last_crawl_time'] if metadata else datetime.now() - timedelta(days=1)
+
 
 def update_last_crawl_time(category_url):
     crawl_metadata.update_one(
@@ -83,6 +151,7 @@ def update_last_crawl_time(category_url):
         {'$set': {'last_crawl_time': datetime.now()}},
         upsert=True
     )
+
 
 @lru_cache(maxsize=128)
 def get_category_info(category_url):
@@ -104,12 +173,14 @@ def get_category_info(category_url):
         }
     return None
 
+
 def check_keywords(category_doc, title, content):
     if not category_doc or "keyword" not in category_doc or not category_doc["keyword"]:
         return True
     keywords = [kw.lower() for kw in category_doc["keyword"]]
     title_lower, content_lower = title.lower(), content.lower()
     return any(keyword in title_lower or keyword in content_lower for keyword in keywords)
+
 
 def extract_article_urls(category_url):
     try:
@@ -123,10 +194,16 @@ def extract_article_urls(category_url):
 
         url_patterns = {
             'cafebiz.vn': (lambda href: href.endswith('.chn') and re.search(r'\d{10,}', href), 'div', 'cfbiznews_box'),
-            'vneconomy.vn': (lambda href: href.endswith('.htm') and not re.search(r'^/[a-z-]+\.htm$', href), 'article', 'story'),
-            'thanhnien.vn': (lambda href: href.endswith('.htm') and re.search(r'-\d{15,}\.htm$', href), ['div', 'article'], re.compile('box-category-item|item-first|item-related|list__focus|box-category-middle')),
-            'tuoitre.vn': (lambda href: href.endswith('.htm') and re.search(r'-\d{14}\.htm$', href), ['div', 'li'], re.compile('box-category-item-main|item-first|item-related|box-category-item|box-category-middle')),
-            'tinnhanhchungkhoan.vn': (lambda href: '-post' in href and re.search(r'-post\d+\.html$', href), 'article', 'story')
+            'vneconomy.vn': (
+            lambda href: href.endswith('.htm') and not re.search(r'^/[a-z-]+\.htm$', href), 'article', 'story'),
+            'thanhnien.vn': (
+            lambda href: href.endswith('.htm') and re.search(r'-\d{15,}\.htm$', href), ['div', 'article'],
+            re.compile('box-category-item|item-first|item-related|list__focus|box-category-middle')),
+            'tuoitre.vn': (lambda href: href.endswith('.htm') and re.search(r'-\d{14}\.htm$', href), ['div', 'li'],
+                           re.compile(
+                               'box-category-item-main|item-first|item-related|box-category-item|box-category-middle')),
+            'tinnhanhchungkhoan.vn': (
+            lambda href: '-post' in href and re.search(r'-post\d+\.html$', href), 'article', 'story')
         }
 
         for domain, (condition, tag, class_) in url_patterns.items():
@@ -146,10 +223,13 @@ def extract_article_urls(category_url):
                     continue
                 full_url = href if href.startswith('http') else f"{base_url}{href}"
                 if (('tuoitre.vn' in category_url and href.endswith('.htm') and re.search(r'-\d{14}\.htm$', href)) or
-                    ('thanhnien.vn' in category_url and href.endswith('.htm') and re.search(r'-\d{15,}\.htm$', href)) or
-                    ('laodong.vn' in category_url and href.endswith('.ldo') and re.search(r'-\d{15,}\.ldo$', href)) or
-                    ('tinnhanhchungkhoan.vn' in category_url and '-post' in href and re.search(r'-post\d+\.html$', href)) or
-                    re.match(r'.*\.html$|/.*-\d+$', href)):
+                        ('thanhnien.vn' in category_url and href.endswith('.htm') and re.search(r'-\d{15,}\.htm$',
+                                                                                                href)) or
+                        ('laodong.vn' in category_url and href.endswith('.ldo') and re.search(r'-\d{15,}\.ldo$',
+                                                                                              href)) or
+                        ('tinnhanhchungkhoan.vn' in category_url and '-post' in href and re.search(r'-post\d+\.html$',
+                                                                                                   href)) or
+                        re.match(r'.*\.html$|/.*-\d+$', href)):
                     article_urls.add(full_url)
 
         unique_urls = list(article_urls)[:30]
@@ -158,6 +238,7 @@ def extract_article_urls(category_url):
     except Exception as e:
         logger.error(f"Lỗi khi trích xuất URL từ {category_url}: {str(e)}")
         return []
+
 
 def parse_article(args):
     article_url, category_info, last_crawl_time = args
@@ -212,7 +293,8 @@ def parse_article(args):
                     if domain in article_url:
                         author_tag = soup.find(tag, class_=class_) or soup.find('meta', {'name': 'author'})
                         if author_tag:
-                            author = author_tag.get_text(strip=True) if author_tag.name != 'meta' else author_tag.get('content', '').strip()
+                            author = author_tag.get_text(strip=True) if author_tag.name != 'meta' else author_tag.get(
+                                'content', '').strip()
                             if author == "Https":
                                 author = domain.split('.')[0]
                         break
@@ -237,6 +319,7 @@ def parse_article(args):
         logger.error(f"Lỗi khi phân tích bài viết {article_url}: {str(e)}")
         return None
 
+
 def crawl_category(category_url, articles_collection):
     last_crawl_time = get_last_crawl_time(category_url)
     category_info = get_category_info(category_url)
@@ -247,26 +330,37 @@ def crawl_category(category_url, articles_collection):
     logger.info(f"Bắt đầu crawl danh mục: {category_url}, lần crawl cuối: {last_crawl_time}")
 
     if 'tienphong.vn' in category_url:
-        tienphong_crawler.crawl_tienphong_category(category_url, articles_collection, categories_collection, last_crawl_time)
+        tienphong_crawler.crawl_tienphong_category(category_url, articles_collection, categories_collection,
+                                                   last_crawl_time, publish_to_rabbitmq)
     elif 'nhandan.vn' in category_url:
-        nhandan_crawler.crawl_nhandan_category(category_url, articles_collection, categories_collection, last_crawl_time)
+        nhandan_crawler.crawl_nhandan_category(category_url, articles_collection, categories_collection,
+                                               last_crawl_time, publish_to_rabbitmq)
     elif 'vnexpress.net' in category_url:
-        vnexpress_crawler.crawl_vnexpress_category(category_url, articles_collection, categories_collection, last_crawl_time)
+        vnexpress_crawler.crawl_vnexpress_category(category_url, articles_collection, categories_collection,
+                                                   last_crawl_time, publish_to_rabbitmq)
     else:
         article_urls = extract_article_urls(category_url)
         existing_urls = set(articles_collection.distinct('link', {'link': {'$in': article_urls}}))
         new_urls = [url for url in article_urls if url not in existing_urls]
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            articles = list(filter(None, executor.map(parse_article, [(url, category_info, last_crawl_time) for url in new_urls])))
+            articles = list(
+                filter(None, executor.map(parse_article, [(url, category_info, last_crawl_time) for url in new_urls])))
 
         if articles:
             valid_articles = [article for article in articles if article['publish_date'] >= last_crawl_time]
             if valid_articles:
-                articles_collection.insert_many(valid_articles, ordered=False)
+                for article in valid_articles:
+                    try:
+                        articles_collection.insert_one(article)
+                        # Đẩy vào RabbitMQ
+                        publish_to_rabbitmq(article)
+                    except Exception as e:
+                        logger.error(f"Lỗi khi lưu bài viết {article['link']}: {str(e)}")
                 logger.info(f"Đã lưu {len(valid_articles)} bài viết từ {category_url}")
 
     update_last_crawl_time(category_url)
+
 
 def crawl_all_categories(articles_collection):
     category_urls = get_categories()  # Lấy danh mục mới nhất mỗi lần
@@ -274,6 +368,7 @@ def crawl_all_categories(articles_collection):
     for category_url in category_urls:
         crawl_category(category_url, articles_collection)
     logger.info("Hoàn thành crawl tất cả danh mục.")
+
 
 def main():
     crawl_all_categories(articles_collection)
@@ -286,6 +381,7 @@ def main():
         except Exception as e:
             logger.error(f"Lỗi trong vòng lặp chính: {str(e)}")
             time.sleep(60)
+
 
 if __name__ == "__main__":
     main()

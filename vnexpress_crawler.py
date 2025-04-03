@@ -7,7 +7,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def crawl_vnexpress_category(category_url, collection, categories_collection, last_crawl_time):
+def crawl_vnexpress_category(category_url, collection, categories_collection, last_crawl_time,
+                             publish_to_rabbitmq=None):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -83,7 +84,7 @@ def crawl_vnexpress_category(category_url, collection, categories_collection, la
 
                 images = [img.get('data-src') or img.get('src') for img in article_soup.find_all('img', class_='lazy')
                           if (img.get('data-src') or img.get('src')) and (
-                                      img.get('data-src') or img.get('src')).startswith('http')]
+                                  img.get('data-src') or img.get('src')).startswith('http')]
 
                 if check_keywords:
                     title_lower = title.lower()
@@ -115,8 +116,16 @@ def crawl_vnexpress_category(category_url, collection, categories_collection, la
                     'author': author,
                     'crawl_date': datetime.now()
                 }
-                collection.insert_one(article_data)
-                logger.info(f"Đã lưu (VnExpress): {title} - {link}")
+
+                try:
+                    collection.insert_one(article_data)
+                    logger.info(f"Đã lưu (VnExpress): {title} - {link}")
+
+                    # Đẩy vào RabbitMQ nếu hàm được cung cấp
+                    if publish_to_rabbitmq:
+                        publish_to_rabbitmq(article_data)
+                except Exception as e:
+                    logger.error(f"Lỗi khi lưu bài viết {link}: {str(e)}")
 
             except requests.exceptions.RequestException as e:
                 logger.error(f"Lỗi request bài viết {link}: {str(e)}")
