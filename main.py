@@ -22,8 +22,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Kết nối MongoDB10.8.0.1:23781
-# client = MongoClient('mongodb://mongo:27017')
-client = MongoClient('mongodb://10.8.0.1:23781')
+client = MongoClient('mongodb://mongo:27017')
+# client = MongoClient('mongodb://10.8.0.1:23781')
 
 db = client['olh_news']
 articles_collection = db['articles']
@@ -38,8 +38,8 @@ crawl_metadata.create_index([("category_url", 1)])
 def get_rabbitmq_connection():
     try:
         connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host='10.8.0.1', port=5672, heartbeat=600)
-            # host = 'rabbitmq', port = 5672, heartbeat = 600)
+            # host='10.8.0.1', port=5672, heartbeat=600)
+            host = 'rabbitmq', port = 5672, heartbeat = 600)
         )
         return connection
     except Exception as e:
