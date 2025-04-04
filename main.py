@@ -208,13 +208,13 @@ def parse_article(args):
 
         content_selectors = source.get('content_selectors', ['article', '.content', '.article-body', 'p']) if source else ['article', '.content', '.article-body', 'p']
         content = article.text.strip()
-        if not content or len(content.split()) < 200:
+        if not content or len(content.split()) < 500:
             for selector in content_selectors:
                 content_tags = soup.select(selector)
                 if content_tags:
                     content = ' '.join(tag.get_text(strip=True) for tag in content_tags)
                     break
-        if not content or len(content.split()) < 200:
+        if not content or len(content.split()) < 500:
             logger.warning(f"Nội dung quá ngắn hoặc không tìm thấy cho {article_url}")
             return None
 
