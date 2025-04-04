@@ -21,8 +21,10 @@ import json
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Kết nối MongoDB
+# Kết nối MongoDB10.8.0.1:23781
 client = MongoClient('mongodb://mongo:27017')
+# client = MongoClient('mongodb://10.8.0.1:23781')
+
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
@@ -36,7 +38,9 @@ crawl_metadata.create_index([("category_url", 1)])
 def get_rabbitmq_connection():
     try:
         connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host='rabbitmq', port=5672, heartbeat=600))
+            # host='10.8.0.1', port=5672, heartbeat=600)
+             host = 'rabbitmq', port = 5672, heartbeat = 600)
+        )
         return connection
     except Exception as e:
         logger.error(f"Lỗi kết nối RabbitMQ: {str(e)}")
@@ -144,7 +148,7 @@ def extract_article_urls(category_url):
             full_url = href if href.startswith('http') else f"{base_url}{href}"
             if (any(re.search(pattern, full_url) for pattern in url_patterns) and
                 not any(ex in full_url.lower() for ex in exclude_patterns) and
-                len(full_url) > 35):
+                len(full_url) > 45):
                 article_urls.add(full_url)
 
         # Fallback: Tìm các liên kết phổ biến nếu không có URL nào được trích xuất
@@ -152,7 +156,7 @@ def extract_article_urls(category_url):
             for a_tag in soup.find_all('a', href=True):
                 href = a_tag['href']
                 full_url = href if href.startswith('http') else f"{base_url}{href}"
-                if re.search(r'/[a-z0-9-]+/?$', full_url) and len(full_url) > 35:
+                if re.search(r'/[a-z0-9-]+/?$', full_url) and len(full_url) > 45:
                     article_urls.add(full_url)
 
         unique_urls = list(article_urls)[:30]
@@ -171,12 +175,10 @@ def parse_article(args):
         soup = BeautifulSoup(response.text, 'html.parser')
         source = get_source_from_url(article_url)
 
-        # Sử dụng newspaper3k trước
         article = Article(article_url, language='vi')
         article.set_html(response.text)
         article.parse()
 
-        # Lấy tiêu đề
         title_selectors = source.get('title_selectors', ['h1', 'h2', '.title', 'title']) if source else ['h1', 'h2', '.title', 'title']
         title = article.title
         if not title:
@@ -191,7 +193,6 @@ def parse_article(args):
             logger.warning(f"Không tìm thấy tiêu đề cho {article_url}")
             return None
 
-        # Lấy ngày đăng
         date_selectors = source.get('date_selectors', ['.date', '.time', 'time', '.publish-date']) if source else ['.date', '.time', 'time', '.publish-date']
         publish_date = article.publish_date
         if not publish_date:
@@ -203,12 +204,11 @@ def parse_article(args):
                         break
                     except:
                         continue
-        publish_date = publish_date or datetime.now()
+        publish_date = publish_date.replace(tzinfo=None) if publish_date else datetime.now()
 
-        # Lấy nội dung
         content_selectors = source.get('content_selectors', ['article', '.content', '.article-body', 'p']) if source else ['article', '.content', '.article-body', 'p']
         content = article.text.strip()
-        if not content or len(content.split()) < 100:  # Giảm ngưỡng để linh hoạt hơn
+        if not content or len(content.split()) < 100:
             for selector in content_selectors:
                 content_tags = soup.select(selector)
                 if content_tags:
@@ -218,12 +218,10 @@ def parse_article(args):
             logger.warning(f"Nội dung quá ngắn hoặc không tìm thấy cho {article_url}")
             return None
 
-        # Kiểm tra từ khóa
         category_doc = categories_collection.find_one({'url': category_info['url']})
         if not check_keywords(category_doc, title, content):
             return None
 
-        # Lấy mô tả và hình ảnh
         description = article.meta_description or content[:200]
         images = [article.top_image] if article.top_image else list(article.images)
 
@@ -244,7 +242,6 @@ def parse_article(args):
     except Exception as e:
         logger.error(f"Lỗi khi phân tích bài viết {article_url}: {str(e)}")
         return None
-
 def crawl_category(category_url, articles_collection):
     last_crawl_time = get_last_crawl_time(category_url)
     category_info = get_category_info(category_url)
