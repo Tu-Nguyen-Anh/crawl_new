@@ -22,8 +22,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Kết nối MongoDB10.8.0.1:23781
-client = MongoClient('mongodb://mongo:27017')
-# client = MongoClient('mongodb://10.8.0.1:23781')
+# client = MongoClient('mongodb://mongo:27017')
+client = MongoClient('mongodb://10.8.0.1:23781')
 
 db = client['olh_news']
 articles_collection = db['articles']
@@ -38,8 +38,8 @@ crawl_metadata.create_index([("category_url", 1)])
 def get_rabbitmq_connection():
     try:
         connection = pika.BlockingConnection(pika.ConnectionParameters(
-            # host='10.8.0.1', port=5672, heartbeat=600)
-             host = 'rabbitmq', port = 5672, heartbeat = 600)
+            host='10.8.0.1', port=5672, heartbeat=600)
+            # host = 'rabbitmq', port = 5672, heartbeat = 600)
         )
         return connection
     except Exception as e:
@@ -137,7 +137,7 @@ def extract_article_urls(category_url):
         base_url = source['url'] if source else 'https://' + category_url.split('/')[2]
 
         # Cấu hình mẫu URL từ source (nếu có)
-        url_patterns = source.get('url_patterns', [r'.*\.(html|htm)$', r'-\d{6,}$']) if source else [r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']
+        url_patterns = source.get('url_patterns', [r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']) if source else [r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']
         exclude_patterns = source.get('exclude_patterns', ['/category/', '/tag/', '/author/', '/page/', '/search/']) if source else ['/category/', '/tag/', '/author/', '/page/', '/search/']
 
         for a_tag in soup.find_all('a', href=True):
@@ -208,13 +208,13 @@ def parse_article(args):
 
         content_selectors = source.get('content_selectors', ['article', '.content', '.article-body', 'p']) if source else ['article', '.content', '.article-body', 'p']
         content = article.text.strip()
-        if not content or len(content.split()) < 100:
+        if not content or len(content.split()) < 200:
             for selector in content_selectors:
                 content_tags = soup.select(selector)
                 if content_tags:
                     content = ' '.join(tag.get_text(strip=True) for tag in content_tags)
                     break
-        if not content or len(content.split()) < 100:
+        if not content or len(content.split()) < 200:
             logger.warning(f"Nội dung quá ngắn hoặc không tìm thấy cho {article_url}")
             return None
 
@@ -278,7 +278,7 @@ def crawl_all_categories(articles_collection):
 
 def main():
     crawl_all_categories(articles_collection)
-    schedule.every(1).minutes.do(crawl_all_categories, articles_collection)
+    schedule.every(6).minutes.do(crawl_all_categories, articles_collection)
     while True:
         try:
             schedule.run_pending()
