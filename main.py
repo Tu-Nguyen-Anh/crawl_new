@@ -16,13 +16,21 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 import pika
 import json
-
+import gzip
+import zlib
+import io
+try:
+    import brotli
+except ImportError:
+    brotli = None  # Nếu không cài brotli, sẽ bỏ qua hỗ trợ brotli
 # Cấu hình logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Kết nối MongoDB
-client = MongoClient('mongodb://mongo:27017')
+# client = MongoClient('mongodb://mongo:27017')
+client = MongoClient('mongodb://localhost:27017')
+
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
@@ -123,18 +131,56 @@ def check_keywords(category_doc, title, content):
     title_lower, content_lower = title.lower(), content.lower()
     return any(keyword in title_lower or keyword in content_lower for keyword in keywords)
 
+
+def decompress_response(response):
+    """Giải nén nội dung response chỉ khi thực sự bị nén."""
+    content = response.content
+
+    # Kiểm tra magic number để xác định xem nội dung có thực sự bị nén hay không
+    if content[:2] == b'\x1f\x8b':  # Magic number của gzip
+        try:
+            logger.info("Phát hiện nội dung nén gzip, đang giải nén...")
+            return gzip.decompress(content)
+        except Exception as e:
+            logger.error(f"Lỗi khi giải nén gzip: {str(e)}")
+            return content
+
+    elif content[:3] == b'\x78\x9c\xda' or content[:3] == b'\x78\x01\xda':  # Magic number phổ biến của deflate
+        try:
+            logger.info("Phát hiện nội dung nén deflate, đang giải nén...")
+            return zlib.decompress(content)
+        except Exception as e:
+            logger.error(f"Lỗi khi giải nén deflate: {str(e)}")
+            return content
+
+    elif brotli and content[:3] == b'\xce\xb2\xcf':  # Magic number của brotli (có thể thay đổi tùy phiên bản)
+        try:
+            logger.info("Phát hiện nội dung nén brotli, đang giải nén...")
+            return brotli.decompress(content)
+        except Exception as e:
+            logger.error(f"Lỗi khi giải nén brotli: {str(e)}")
+            return content
+
+    # Nếu không phát hiện nén, trả về nội dung gốc
+    return content
 def extract_article_urls(category_url):
     try:
         response = session.get(category_url, headers=get_random_headers(), timeout=10)
         response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Giải nén nội dung nếu cần
+        decompressed_content = decompress_response(response)
+        soup = BeautifulSoup(decompressed_content, 'html.parser')
+
         article_urls = set()
         source = get_source_from_url(category_url)
         base_url = source['url'] if source else 'https://' + category_url.split('/')[2]
 
-        # Cấu hình mẫu URL từ source (nếu có)
-        url_patterns = source.get('url_patterns', [r'.*\.(html|htm)$', r'-\d{6,}$']) if source else [r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']
-        exclude_patterns = source.get('exclude_patterns', ['/category/', '/tag/', '/author/', '/page/', '/search/']) if source else ['/category/', '/tag/', '/author/', '/page/', '/search/']
+        url_patterns = source.get('url_patterns', [r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']) if source else [
+            r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']
+        exclude_patterns = source.get('exclude_patterns',
+                                      ['/category/', '/tag/', '/author/', '/page/', '/search/']) if source else [
+            '/category/', '/tag/', '/author/', '/page/', '/search/']
 
         for a_tag in soup.find_all('a', href=True):
             href = a_tag['href']
@@ -143,11 +189,10 @@ def extract_article_urls(category_url):
 
             full_url = href if href.startswith('http') else f"{base_url}{href}"
             if (any(re.search(pattern, full_url) for pattern in url_patterns) and
-                not any(ex in full_url.lower() for ex in exclude_patterns) and
-                len(full_url) > 35):
+                    not any(ex in full_url.lower() for ex in exclude_patterns) and
+                    len(full_url) > 35):
                 article_urls.add(full_url)
 
-        # Fallback: Tìm các liên kết phổ biến nếu không có URL nào được trích xuất
         if not article_urls:
             for a_tag in soup.find_all('a', href=True):
                 href = a_tag['href']
@@ -162,18 +207,18 @@ def extract_article_urls(category_url):
         logger.error(f"Lỗi khi trích xuất URL từ {category_url}: {str(e)}")
         return []
 
+
 def parse_article(args):
     article_url, category_info, last_crawl_time = args
     try:
         time.sleep(random.uniform(1, 3))
         response = session.get(article_url, headers=get_random_headers(), timeout=60)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+        decompressed_content = decompress_response(response)
+        soup = BeautifulSoup(decompressed_content, 'html.parser')
         source = get_source_from_url(article_url)
-
-        # Sử dụng newspaper3k trước
         article = Article(article_url, language='vi')
-        article.set_html(response.text)
+        article.set_html(decompressed_content.decode('utf-8', errors='ignore'))
         article.parse()
 
         # Lấy tiêu đề
@@ -203,12 +248,13 @@ def parse_article(args):
                         break
                     except:
                         continue
-        publish_date = publish_date or datetime.now()
+        # Chuẩn hóa publish_date thành offset-naive
+        publish_date = publish_date.replace(tzinfo=None) if publish_date else datetime.now().replace(tzinfo=None)
 
         # Lấy nội dung
         content_selectors = source.get('content_selectors', ['article', '.content', '.article-body', 'p']) if source else ['article', '.content', '.article-body', 'p']
         content = article.text.strip()
-        if not content or len(content.split()) < 100:  # Giảm ngưỡng để linh hoạt hơn
+        if not content or len(content.split()) < 100:
             for selector in content_selectors:
                 content_tags = soup.select(selector)
                 if content_tags:
@@ -223,7 +269,6 @@ def parse_article(args):
         if not check_keywords(category_doc, title, content):
             return None
 
-        # Lấy mô tả và hình ảnh
         description = article.meta_description or content[:200]
         images = [article.top_image] if article.top_image else list(article.images)
 
@@ -237,14 +282,13 @@ def parse_article(args):
             'publish_date': publish_date,
             'images': images,
             'author': article.authors[0] if article.authors else None,
-            'crawl_date': datetime.now()
+            'crawl_date': datetime.now().replace(tzinfo=None)  # Cũng chuẩn hóa crawl_date
         }
         logger.info(f"Đã phân tích bài viết: {title}")
         return article_data
     except Exception as e:
         logger.error(f"Lỗi khi phân tích bài viết {article_url}: {str(e)}")
         return None
-
 def crawl_category(category_url, articles_collection):
     last_crawl_time = get_last_crawl_time(category_url)
     category_info = get_category_info(category_url)
@@ -266,11 +310,12 @@ def crawl_category(category_url, articles_collection):
             for article in valid_articles:
                 try:
                     articles_collection.insert_one(article)
-                    publish_to_rabbitmq(article)
+                    # publish_to_rabbitmq(article)
                 except Exception as e:
                     logger.error(f"Lỗi khi lưu bài viết {article['link']}: {str(e)}")
             logger.info(f"Đã lưu {len(valid_articles)} bài viết từ {category_url}")
     update_last_crawl_time(category_url)
+
 
 def crawl_all_categories(articles_collection):
     category_urls = get_categories()
