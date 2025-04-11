@@ -8,3 +8,4 @@ urllib3>=1.26.0
 lxml>=5.0.0
 pika==1.2.0
 pytz>=2022.1
+lxml_html_clean>=0.1.0
