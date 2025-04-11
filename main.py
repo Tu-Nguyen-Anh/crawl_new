@@ -18,19 +18,20 @@ import pika
 import json
 import pytz
 
-# Cấu hình logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+# Cấu hình logging (chỉ giữ INFO và ERROR)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 # Hàm lấy thời gian hiện tại theo múi giờ Asia/Ho_Chi_Minh
 def get_current_time_vn():
     vn_timezone = pytz.timezone('Asia/Ho_Chi_Minh')
     return datetime.now(vn_timezone)
 
-
 # Kết nối MongoDB
-client = MongoClient('mongodb://localhost:27017')
+# client = MongoClient('mongodb://localhost:27017')
+client = MongoClient('mongodb://mongo:27017')
+
+
 db = client['olh_news']
 articles_collection = db['articles']
 categories_collection = db['categories']
@@ -41,12 +42,14 @@ crawl_schedule_collection = db['crawl_config']
 articles_collection.create_index([("link", 1)], unique=True)
 crawl_metadata.create_index([("category_url", 1)])
 
-
 # Kết nối RabbitMQ
 def get_rabbitmq_connection():
     try:
         connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host='10.8.0.1', port=5672, heartbeat=600))
+            host='rabbitmq',  # Thay đổi host này nếu RabbitMQ server không chạy trên localhost
+            port=5672,  # Port mặc định của RabbitMQ
+            heartbeat=600  # Heartbeat để giữ kết nối sống
+        ))
         return connection
     except Exception as e:
         logger.error(f"Lỗi kết nối RabbitMQ: {str(e)}")
@@ -66,19 +69,17 @@ def publish_to_rabbitmq(article_data):
         channel.queue_declare(queue_name, durable=True)
         channel.queue_bind(exchange=exchange_name, queue=queue_name, routing_key=routing_key)
         article_json = article_data.copy()
-        article_json['publish_date'] = article_json['publish_date'].isoformat() if article_json[
-            'publish_date'] else None
+        article_json['publish_date'] = article_json['publish_date'].isoformat() if article_json['publish_date'] else None
         article_json['crawl_date'] = article_json['crawl_date'].isoformat() if article_json['crawl_date'] else None
         message = json.dumps(article_json)
         channel.basic_publish(exchange=exchange_name, routing_key=routing_key, body=message,
-                              properties=pika.BasicProperties(delivery_mode=2, content_type='application/json'))
+                             properties=pika.BasicProperties(delivery_mode=2, content_type='application/json'))
         logger.info(f"Đã đẩy bài viết vào RabbitMQ: {article_data['title']}")
         connection.close()
         return True
     except Exception as e:
         logger.error(f"Lỗi khi gửi dữ liệu đến RabbitMQ: {str(e)}")
         return False
-
 
 # Cấu hình requests
 USER_AGENTS = [
@@ -95,20 +96,16 @@ adapter = HTTPAdapter(max_retries=retry_strategy)
 session.mount("https://", adapter)
 session.mount("http://", adapter)
 
-
 def get_random_headers():
     return {'User-Agent': random.choice(USER_AGENTS)}
-
 
 @lru_cache(maxsize=1)
 def get_sources():
     return list(sources_collection.find())
 
-
 def get_categories():
     categories = list(categories_collection.find())
     return [cat['url'] for cat in categories]
-
 
 def get_source_from_url(url):
     sources = get_sources()
@@ -116,7 +113,6 @@ def get_source_from_url(url):
         if source['url'] in url:
             return source
     return None
-
 
 def get_last_crawl_time(category_url):
     metadata = crawl_metadata.find_one({'category_url': category_url}, {'last_crawl_time': 1})
@@ -128,14 +124,12 @@ def get_last_crawl_time(category_url):
         return last_crawl_time
     return get_current_time_vn() - timedelta(days=1)
 
-
 def update_last_crawl_time(category_url):
     crawl_metadata.update_one(
         {'category_url': category_url},
         {'$set': {'last_crawl_time': get_current_time_vn()}},
         upsert=True
     )
-
 
 @lru_cache(maxsize=128)
 def get_category_info(category_url):
@@ -148,14 +142,12 @@ def get_category_info(category_url):
         return {'_id': str(uuid.uuid4()), 'name': 'Unknown', 'source': source, 'url': category_url}
     return None
 
-
 def check_keywords(category_doc, title, content):
     if not category_doc or "keyword" not in category_doc or not category_doc["keyword"]:
         return True
     keywords = [kw.lower() for kw in category_doc["keyword"]]
     title_lower, content_lower = title.lower(), content.lower()
     return any(keyword in title_lower or keyword in content_lower for keyword in keywords)
-
 
 def extract_article_urls(category_url):
     try:
@@ -169,7 +161,7 @@ def extract_article_urls(category_url):
         url_patterns = source.get('url_patterns', [r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']) if source else [
             r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']
         exclude_patterns = source.get('exclude_patterns',
-                                      ['/category/', '/tag/', '/author/', '/page/', '/search/']) if source else [
+                                     ['/category/', '/tag/', '/author/', '/page/', '/search/']) if source else [
             '/category/', '/tag/', '/author/', '/page/', '/search/']
 
         for a_tag in soup.find_all('a', href=True):
@@ -191,12 +183,11 @@ def extract_article_urls(category_url):
                     article_urls.add(full_url)
 
         unique_urls = list(article_urls)[:30]
-        logger.info(f"Tìm thấy {len(unique_urls)} URL từ {category_url}: {unique_urls}")
+        logger.info(f"Tìm thấy {len(unique_urls)} URL từ {category_url}")
         return unique_urls
     except Exception as e:
         logger.error(f"Lỗi khi trích xuất URL từ {category_url}: {str(e)}")
         return []
-
 
 def parse_article(args):
     article_url, category_info, last_crawl_time = args
@@ -248,10 +239,10 @@ def parse_article(args):
             publish_date = vn_timezone.localize(publish_date)
 
         content_selectors = source.get('content_selectors',
-                                       ['article', '.content', '.article-body', 'p']) if source else ['article',
-                                                                                                      '.content',
-                                                                                                      '.article-body',
-                                                                                                      'p']
+                                      ['article', '.content', '.article-body', 'p']) if source else ['article',
+                                                                                                    '.content',
+                                                                                                    '.article-body',
+                                                                                                    'p']
         content = article.text.strip()
         if not content or len(content.split()) < 300:
             for selector in content_selectors:
@@ -288,7 +279,6 @@ def parse_article(args):
         logger.error(f"Lỗi khi phân tích bài viết {article_url}: {str(e)}")
         return None
 
-
 def crawl_category(category_url, articles_collection):
     try:
         last_crawl_time = get_last_crawl_time(category_url)
@@ -320,7 +310,6 @@ def crawl_category(category_url, articles_collection):
     except Exception as e:
         logger.error(f"Lỗi khi crawl danh mục {category_url}: {str(e)}")
 
-
 def crawl_all_categories(articles_collection):
     try:
         category_urls = get_categories()
@@ -331,22 +320,18 @@ def crawl_all_categories(articles_collection):
     except Exception as e:
         logger.error(f"Lỗi khi crawl tất cả danh mục: {str(e)}")
 
-
 # Đọc và áp dụng cấu hình từ MongoDB
 last_config = None
-
 
 def apply_schedule_config():
     global last_config
     try:
-        logger.info("Bắt đầu kiểm tra cấu hình crawl từ database.")
         config = crawl_schedule_collection.find_one(sort=[("updated_at", -1)])
 
         if not config:
             logger.warning("Không tìm thấy cấu hình trong crawl_config.")
             if last_config is not None:
-                logger.info("Xóa lịch trình crawl cũ vì không còn cấu hình trong database.")
-                schedule.clear('crawl')  # Chỉ xóa các công việc có tag 'crawl'
+                schedule.clear('crawl')
                 last_config = None
             return
 
@@ -360,75 +345,45 @@ def apply_schedule_config():
         times = current_config.get("times", ["08:00", "12:00", "18:00"]) if mode == 2 else None
         minutes = current_config.get("minutes", 5) if mode == 3 else None
 
-        # Log chi tiết cấu hình hiện tại
-        logger.info(
-            f"Đọc cấu hình hiện tại từ database: mode={mode}, times={times}, minutes={minutes}, updated_at={current_config.get('updated_at')}")
-        if last_config:
-            logger.info(
-                f"Cấu hình cũ: mode={last_config.get('mode')}, times={last_config.get('times')}, minutes={last_config.get('minutes')}, updated_at={last_config.get('updated_at')}")
-
-        # Kiểm tra thay đổi chi tiết
         config_changed = False
         if last_config is None:
-            logger.info("Không có cấu hình cũ (last_config is None), áp dụng cấu hình mới.")
             config_changed = True
         else:
             last_mode = last_config.get("mode")
             last_times = last_config.get("times", ["08:00", "12:00", "18:00"]) if last_mode == 2 else None
             last_minutes = last_config.get("minutes", 5) if last_mode == 3 else None
 
-            if mode != last_mode:
-                logger.info(f"Thay đổi phát hiện: mode thay đổi từ {last_mode} thành {mode}")
+            if mode != last_mode or (mode == 2 and times != last_times) or (mode == 3 and minutes != last_minutes):
                 config_changed = True
-            elif mode == 2 and times != last_times:
-                logger.info(f"Thay đổi phát hiện: times thay đổi từ {last_times} thành {times}")
-                config_changed = True
-            elif mode == 3 and minutes != last_minutes:
-                logger.info(f"Thay đổi phát hiện: minutes thay đổi từ {last_minutes} thành {minutes}")
-                config_changed = True
-            elif current_config != last_config:
-                logger.info(f"Thay đổi phát hiện: cấu hình tổng thể khác biệt (so sánh toàn bộ)")
-                config_changed = True
-            else:
-                logger.info("Không có thay đổi nào được phát hiện giữa cấu hình hiện tại và cấu hình cũ.")
 
         if config_changed:
-            logger.info(f"Áp dụng cấu hình mới: {current_config}")
-            last_config = current_config.copy()  # Lưu bản sao của cấu hình hiện tại
-
-            # Xóa các công việc crawl cũ (tag 'crawl')
+            last_config = current_config.copy()
             schedule.clear('crawl')
-            logger.info("Đã xóa lịch trình crawl cũ.")
 
             if mode == 1:
-                logger.info("Cấu hình: Crawl ngay lập tức")
+                logger.info("Crawl ngay lập tức")
                 crawl_all_categories(articles_collection)
 
             elif mode == 2:
                 for t in times:
                     try:
                         schedule.every().day.at(t).tag('crawl').do(crawl_all_categories, articles_collection)
-                        logger.info(f"Đã lên lịch crawl hàng ngày tại: {t}")
                     except Exception as e:
                         logger.error(f"Lỗi khi lên lịch cho thời gian {t}: {str(e)}")
-                logger.info(f"Cấu hình: Crawl hàng ngày tại: {times}")
+                logger.info(f"Crawl hàng ngày tại: {times}")
 
             elif mode == 3:
                 if not isinstance(minutes, (int, float)) or minutes <= 0:
-                    logger.error(f"Giá trị minutes không hợp lệ: {minutes}. Không áp dụng cấu hình.")
+                    logger.error(f"Giá trị minutes không hợp lệ: {minutes}")
                     return
                 schedule.every(minutes).minutes.tag('crawl').do(crawl_all_categories, articles_collection)
-                logger.info(f"Cấu hình: Crawl mỗi {minutes} phút")
+                logger.info(f"Crawl mỗi {minutes} phút")
 
             else:
-                logger.error(f"Cấu hình không hợp lệ: mode={mode}. Không áp dụng cấu hình.")
+                logger.error(f"Cấu hình không hợp lệ: mode={mode}")
                 return
-        else:
-            logger.info("Không áp dụng cấu hình mới vì không có thay đổi.")
-
     except Exception as e:
         logger.error(f"Lỗi khi áp dụng cấu hình: {str(e)}", exc_info=True)
-
 
 def check_schedule_config():
     try:
@@ -436,22 +391,18 @@ def check_schedule_config():
     except Exception as e:
         logger.error(f"Lỗi khi kiểm tra cấu hình: {str(e)}")
 
-
 def main():
-    logger.info("Khởi động chương trình.")
+    logger.info("Khởi động chương trình")
     apply_schedule_config()
-    schedule.every(5).seconds.tag('config_check').do(check_schedule_config)  # Gắn tag cho công việc kiểm tra cấu hình
-    logger.info("Bắt đầu vòng lặp chính, kiểm tra cấu hình mỗi 5 giây.")
+    schedule.every(5).seconds.tag('config_check').do(check_schedule_config)
+    logger.info("Bắt đầu vòng lặp chính, kiểm tra cấu hình mỗi 5 giây")
     while True:
         try:
-            logger.debug("Vòng lặp chính: Đang chạy schedule.run_pending()")
             schedule.run_pending()
-            logger.debug("Vòng lặp chính: Đã chạy xong schedule.run_pending(), chờ 1 giây.")
             time.sleep(1)
         except Exception as e:
-            logger.error(f"Lỗi trong vòng lặp chính: {str(e)}", exc_info=True)
+            logger.error(f"Lỗi trong vòng lặp chính: {str(e)}")
             time.sleep(6)
-
 
 if __name__ == "__main__":
     main()
