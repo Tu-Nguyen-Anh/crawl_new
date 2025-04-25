@@ -22,15 +22,16 @@ import pytz
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
 # Hàm lấy thời gian hiện tại theo múi giờ Asia/Ho_Chi_Minh
 def get_current_time_vn():
     vn_timezone = pytz.timezone('Asia/Ho_Chi_Minh')
     return datetime.now(vn_timezone)
 
-# Kết nối MongoDB
-# client = MongoClient('mongodb://localhost:27017')
-client = MongoClient('mongodb://mongo:27017')
 
+# Kết nối MongoDB
+# client = MongoClient('mongodb://10.8.0.1:23781')
+client = MongoClient('mongodb://mongo:27017')
 
 db = client['olh_news']
 articles_collection = db['articles']
@@ -42,13 +43,14 @@ crawl_schedule_collection = db['crawl_config']
 articles_collection.create_index([("link", 1)], unique=True)
 crawl_metadata.create_index([("category_url", 1)])
 
+
 # Kết nối RabbitMQ
 def get_rabbitmq_connection():
     try:
         connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host='rabbitmq',  # Thay đổi host này nếu RabbitMQ server không chạy trên localhost
-            port=5672,  # Port mặc định của RabbitMQ
-            heartbeat=600  # Heartbeat để giữ kết nối sống
+            host='rabbitmq',
+            port=5672,
+            heartbeat=600
         ))
         return connection
     except Exception as e:
@@ -69,17 +71,19 @@ def publish_to_rabbitmq(article_data):
         channel.queue_declare(queue_name, durable=True)
         channel.queue_bind(exchange=exchange_name, queue=queue_name, routing_key=routing_key)
         article_json = article_data.copy()
-        article_json['publish_date'] = article_json['publish_date'].isoformat() if article_json['publish_date'] else None
+        article_json['publish_date'] = article_json['publish_date'].isoformat() if article_json[
+            'publish_date'] else None
         article_json['crawl_date'] = article_json['crawl_date'].isoformat() if article_json['crawl_date'] else None
         message = json.dumps(article_json)
         channel.basic_publish(exchange=exchange_name, routing_key=routing_key, body=message,
-                             properties=pika.BasicProperties(delivery_mode=2, content_type='application/json'))
+                              properties=pika.BasicProperties(delivery_mode=2, content_type='application/json'))
         logger.info(f"Đã đẩy bài viết vào RabbitMQ: {article_data['title']}")
         connection.close()
         return True
     except Exception as e:
         logger.error(f"Lỗi khi gửi dữ liệu đến RabbitMQ: {str(e)}")
         return False
+
 
 # Cấu hình requests
 USER_AGENTS = [
@@ -96,16 +100,28 @@ adapter = HTTPAdapter(max_retries=retry_strategy)
 session.mount("https://", adapter)
 session.mount("http://", adapter)
 
+
 def get_random_headers():
     return {'User-Agent': random.choice(USER_AGENTS)}
+
 
 @lru_cache(maxsize=1)
 def get_sources():
     return list(sources_collection.find())
 
+
 def get_categories():
+    # Lấy tất cả categories từ MongoDB
     categories = list(categories_collection.find())
-    return [cat['url'] for cat in categories]
+    # Loại bỏ các categories có URL trùng lặp, giữ lại category đầu tiên
+    seen_urls = set()
+    unique_categories = []
+    for cat in categories:
+        if cat['url'] not in seen_urls:
+            seen_urls.add(cat['url'])
+            unique_categories.append(cat)
+    return [cat['url'] for cat in unique_categories]
+
 
 def get_source_from_url(url):
     sources = get_sources()
@@ -113,6 +129,7 @@ def get_source_from_url(url):
         if source['url'] in url:
             return source
     return None
+
 
 def get_last_crawl_time(category_url):
     metadata = crawl_metadata.find_one({'category_url': category_url}, {'last_crawl_time': 1})
@@ -124,12 +141,14 @@ def get_last_crawl_time(category_url):
         return last_crawl_time
     return get_current_time_vn() - timedelta(days=1)
 
+
 def update_last_crawl_time(category_url):
     crawl_metadata.update_one(
         {'category_url': category_url},
         {'$set': {'last_crawl_time': get_current_time_vn()}},
         upsert=True
     )
+
 
 @lru_cache(maxsize=128)
 def get_category_info(category_url):
@@ -142,12 +161,14 @@ def get_category_info(category_url):
         return {'_id': str(uuid.uuid4()), 'name': 'Unknown', 'source': source, 'url': category_url}
     return None
 
+
 def check_keywords(category_doc, title, content):
     if not category_doc or "keyword" not in category_doc or not category_doc["keyword"]:
         return True
     keywords = [kw.lower() for kw in category_doc["keyword"]]
     title_lower, content_lower = title.lower(), content.lower()
     return any(keyword in title_lower or keyword in content_lower for keyword in keywords)
+
 
 def extract_article_urls(category_url):
     try:
@@ -161,7 +182,7 @@ def extract_article_urls(category_url):
         url_patterns = source.get('url_patterns', [r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']) if source else [
             r'.*\.(html|htm|tpo|ldo|chn)$', r'-\d{6,}$']
         exclude_patterns = source.get('exclude_patterns',
-                                     ['/category/', '/tag/', '/author/', '/page/', '/search/']) if source else [
+                                      ['/category/', '/tag/', '/author/', '/page/', '/search/']) if source else [
             '/category/', '/tag/', '/author/', '/page/', '/search/']
 
         for a_tag in soup.find_all('a', href=True):
@@ -188,6 +209,7 @@ def extract_article_urls(category_url):
     except Exception as e:
         logger.error(f"Lỗi khi trích xuất URL từ {category_url}: {str(e)}")
         return []
+
 
 def parse_article(args):
     article_url, category_info, last_crawl_time = args
@@ -239,10 +261,10 @@ def parse_article(args):
             publish_date = vn_timezone.localize(publish_date)
 
         content_selectors = source.get('content_selectors',
-                                      ['article', '.content', '.article-body', 'p']) if source else ['article',
-                                                                                                    '.content',
-                                                                                                    '.article-body',
-                                                                                                    'p']
+                                       ['article', '.content', '.article-body', 'p']) if source else ['article',
+                                                                                                      '.content',
+                                                                                                      '.article-body',
+                                                                                                      'p']
         content = article.text.strip()
         if not content or len(content.split()) < 100:
             for selector in content_selectors:
@@ -279,6 +301,7 @@ def parse_article(args):
         logger.error(f"Lỗi khi phân tích bài viết {article_url}: {str(e)}")
         return None
 
+
 def crawl_category(category_url, articles_collection):
     try:
         last_crawl_time = get_last_crawl_time(category_url)
@@ -310,6 +333,7 @@ def crawl_category(category_url, articles_collection):
     except Exception as e:
         logger.error(f"Lỗi khi crawl danh mục {category_url}: {str(e)}")
 
+
 def crawl_all_categories(articles_collection):
     try:
         category_urls = get_categories()
@@ -320,8 +344,37 @@ def crawl_all_categories(articles_collection):
     except Exception as e:
         logger.error(f"Lỗi khi crawl tất cả danh mục: {str(e)}")
 
+
+# Hàm log tất cả categories đã loại bỏ trùng lặp
+def log_all_categories():
+    try:
+        # Lấy danh sách categories từ MongoDB
+        categories = list(categories_collection.find())
+        if not categories:
+            logger.info("Không tìm thấy danh mục nào trong categories_collection.")
+            return
+
+        # Loại bỏ các categories có URL trùng lặp
+        seen_urls = set()
+        unique_categories = []
+        for cat in categories:
+            if cat['url'] not in seen_urls:
+                seen_urls.add(cat['url'])
+                unique_categories.append(cat)
+
+        # Log danh sách categories
+        logger.info("Danh sách các danh mục sẽ được cào:")
+        for index, category in enumerate(unique_categories, 1):
+            logger.info(f"{index}. URL: {category['url']} | Tên danh mục: {category['name']}")
+
+        logger.info(f"Tổng số danh mục: {len(unique_categories)}")
+    except Exception as e:
+        logger.error(f"Lỗi khi log danh sách danh mục: {str(e)}")
+
+
 # Đọc và áp dụng cấu hình từ MongoDB
 last_config = None
+
 
 def apply_schedule_config():
     global last_config
@@ -385,17 +438,19 @@ def apply_schedule_config():
     except Exception as e:
         logger.error(f"Lỗi khi áp dụng cấu hình: {str(e)}", exc_info=True)
 
+
 def check_schedule_config():
     try:
         apply_schedule_config()
     except Exception as e:
         logger.error(f"Lỗi khi kiểm tra cấu hình: {str(e)}")
 
+
 def main():
     logger.info("Khởi động chương trình")
+    log_all_categories()  # Log danh sách categories khi khởi động
     apply_schedule_config()
     schedule.every(5).seconds.tag('config_check').do(check_schedule_config)
-    logger.info("Bắt đầu vòng lặp chính, kiểm tra cấu hình mỗi 5 giây")
     while True:
         try:
             schedule.run_pending()
@@ -403,6 +458,7 @@ def main():
         except Exception as e:
             logger.error(f"Lỗi trong vòng lặp chính: {str(e)}")
             time.sleep(6)
+
 
 if __name__ == "__main__":
     main()
